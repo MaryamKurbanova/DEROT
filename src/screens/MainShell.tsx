@@ -3,6 +3,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { AppState, Linking, Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { shouldShowFocusWallForApp } from '../lib/accessPass';
+import {
+  markBreathPlusLogRitualCompleted,
+  shouldRequireBreathingBeforeReflectiveLog,
+} from '../lib/breathingInterceptSchedule';
 import { DISTRACTION_APPS, findDistractionById, type DistractionApp } from '../lib/distractionApps';
 import { getInterceptArmed } from '../lib/interceptArmed';
 import {
@@ -14,6 +18,7 @@ import { getMonitoredAppIds, isAppMonitored } from '../lib/monitoredApps';
 import { setLastActiveAppId } from '../lib/usageStats';
 import { registerInterceptWallHandler, requestInterceptWall } from '../lib/wallBridge';
 import { spacing } from '../theme';
+import { BreathingInterceptModal } from './BreathingInterceptModal';
 import { DashboardScreen } from './DashboardScreen';
 import { FocusWallScreen, type FocusWallPurpose } from './FocusWallScreen';
 import { SettingsScreen } from './SettingsScreen';
@@ -25,6 +30,16 @@ function appIdFromUrl(url: string): string | null {
   return params.get('app') || params.get('id');
 }
 
+type InterceptSession =
+  | null
+  /** Reflective log only (10‑minute pass when done). */
+  | { kind: 'reflect'; app: DistractionApp }
+  /** After breathing phase: same log, then pass + 4‑hour ritual marked complete. */
+  | { kind: 'reflect_after_breath'; app: DistractionApp }
+  /** Breathing first; then transitions to `reflect_after_breath`. */
+  | { kind: 'breath'; app: DistractionApp }
+  | { kind: 'practice'; app: DistractionApp };
+
 type Props = {
   onReplayOnboarding?: () => void | Promise<void>;
 };
@@ -32,12 +47,16 @@ type Props = {
 export function MainShell({ onReplayOnboarding }: Props) {
   const insets = useSafeAreaInsets();
   const [screen, setScreen] = useState<'dashboard' | 'settings'>('dashboard');
-  const [wallOpen, setWallOpen] = useState(false);
-  const [wallPurpose, setWallPurpose] = useState<FocusWallPurpose>('intercept');
-  const [targetApp, setTargetApp] = useState<DistractionApp>(DISTRACTION_APPS[0]);
+  const [interceptSession, setInterceptSession] = useState<InterceptSession>(null);
   const [statsTick, setStatsTick] = useState(0);
 
   const bottomInset = Math.max(insets.bottom, 16) + spacing.md;
+
+  const dismissIntercept = useCallback(() => {
+    setInterceptSession(null);
+    setStatsTick((t) => t + 1);
+    void getMonitoredAppIds();
+  }, []);
 
   const considerWall = useCallback(async (appId: string) => {
     if (!(await getInterceptArmed())) return;
@@ -47,9 +66,12 @@ export function MainShell({ onReplayOnboarding }: Props) {
     const show = await shouldShowFocusWallForApp(appId);
     if (!show) return;
     await setLastActiveAppId(appId);
-    setTargetApp(app);
-    setWallPurpose('intercept');
-    setWallOpen(true);
+    const needBreathFirst = await shouldRequireBreathingBeforeReflectiveLog();
+    setInterceptSession(needBreathFirst ? { kind: 'breath', app } : { kind: 'reflect', app });
+  }, []);
+
+  const onBreathingPhaseComplete = useCallback(() => {
+    setInterceptSession((s) => (s?.kind === 'breath' ? { kind: 'reflect_after_breath', app: s.app } : s));
   }, []);
 
   useEffect(() => {
@@ -104,9 +126,22 @@ export function MainShell({ onReplayOnboarding }: Props) {
     return () => sub.remove();
   }, [considerWall]);
 
-  const refreshMonitoredAfterWall = useCallback(async () => {
-    await getMonitoredAppIds();
-  }, []);
+  const focusWallVisible =
+    interceptSession?.kind === 'reflect' ||
+    interceptSession?.kind === 'reflect_after_breath' ||
+    interceptSession?.kind === 'practice';
+  const focusWallPurpose: FocusWallPurpose =
+    interceptSession?.kind === 'practice' ? 'practice' : 'intercept';
+  const focusWallApp =
+    interceptSession?.kind === 'reflect' ||
+    interceptSession?.kind === 'reflect_after_breath' ||
+    interceptSession?.kind === 'practice'
+      ? interceptSession.app
+      : DISTRACTION_APPS[0];
+
+  const afterBreathLog = interceptSession?.kind === 'reflect_after_breath';
+
+  const breathVisible = interceptSession?.kind === 'breath';
 
   return (
     <>
@@ -126,25 +161,29 @@ export function MainShell({ onReplayOnboarding }: Props) {
                 const id = ids[0] ?? DISTRACTION_APPS[0].id;
                 await setLastActiveAppId(id);
                 const app = findDistractionById(id) ?? DISTRACTION_APPS[0];
-                setTargetApp(app);
-                setWallPurpose('practice');
-                setWallOpen(true);
+                setInterceptSession({ kind: 'practice', app });
               }}
             />
           ) : null}
         </View>
 
         <FocusWallScreen
-          visible={wallOpen}
-          purpose={wallPurpose}
-          targetAppId={targetApp.id}
-          targetLabel={targetApp.label}
-          onClose={() => {
-            setWallOpen(false);
-            setStatsTick((t) => t + 1);
-            void refreshMonitoredAfterWall();
-          }}
+          visible={focusWallVisible}
+          purpose={focusWallPurpose}
+          targetAppId={focusWallApp.id}
+          targetLabel={focusWallApp.label}
+          interceptPreamble={
+            afterBreathLog
+              ? 'You’ve breathed. Now complete your log — then you can open the app.'
+              : undefined
+          }
+          onInterceptPassGranted={
+            afterBreathLog ? () => void markBreathPlusLogRitualCompleted() : undefined
+          }
+          onClose={dismissIntercept}
         />
+
+        <BreathingInterceptModal visible={breathVisible} onBreathingPhaseComplete={onBreathingPhaseComplete} />
       </View>
     </>
   );

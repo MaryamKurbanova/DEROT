@@ -1,0 +1,63 @@
+diff --git a/node_modules/@kingstinct/expo-apple-targets/build/target.d.ts b/node_modules/@kingstinct/expo-apple-targets/build/target.d.ts
+index 0000000..0000001 100644
+--- a/node_modules/@kingstinct/expo-apple-targets/build/target.d.ts
++++ b/node_modules/@kingstinct/expo-apple-targets/build/target.d.ts
+@@ -1,5 +1,5 @@
+ import { PBXNativeTarget, XcodeProject } from "@bacons/xcode";
+-export type ExtensionType = "widget" | "notification-content" | "notification-service" | "share" | "intent" | "bg-download" | "intent-ui" | "spotlight" | "matter" | "quicklook-thumbnail" | "imessage" | "clip" | "watch" | "location-push" | "credentials-provider" | "account-auth" | "action" | "safari" | "app-intent" | "device-activity-monitor" | "shield-action" | "shield-configuration";
++export type ExtensionType = "widget" | "notification-content" | "notification-service" | "share" | "intent" | "bg-download" | "intent-ui" | "spotlight" | "matter" | "quicklook-thumbnail" | "imessage" | "clip" | "watch" | "location-push" | "credentials-provider" | "account-auth" | "action" | "safari" | "app-intent" | "device-activity-monitor" | "device-activity-report" | "shield-action" | "shield-configuration";
+ export declare const KNOWN_EXTENSION_POINT_IDENTIFIERS: Record<string, ExtensionType>;
+ export declare const SHOULD_USE_APP_GROUPS_BY_DEFAULT: Record<ExtensionType, boolean>;
+ export declare function getTargetInfoPlistForType(type: ExtensionType): string;
+diff --git a/node_modules/@kingstinct/expo-apple-targets/build/target.js b/node_modules/@kingstinct/expo-apple-targets/build/target.js
+index 0000000..0000001 100644
+--- a/node_modules/@kingstinct/expo-apple-targets/build/target.js
++++ b/node_modules/@kingstinct/expo-apple-targets/build/target.js
+@@ -24,6 +24,7 @@ exports.KNOWN_EXTENSION_POINT_IDENTIFIERS = {
+     "com.apple.services": "action",
+     "com.apple.appintents-extension": "app-intent",
+     "com.apple.deviceactivity.monitor-extension": "device-activity-monitor",
++    "com.apple.deviceactivityui.report-extension": "device-activity-report",
+     "com.apple.ManagedSettings.shield-action-service": "shield-action",
+     "com.apple.ManagedSettingsUI.shield-configuration-service": "shield-configuration",
+     // "com.apple.intents-service": "intents",
+@@ -38,6 +39,7 @@ exports.SHOULD_USE_APP_GROUPS_BY_DEFAULT = {
+     "account-auth": false,
+     "credentials-provider": false,
+     "device-activity-monitor": false,
++    "device-activity-report": true,
+     "app-intent": false,
+     "intent-ui": false,
+     "location-push": false,
+@@ -287,6 +289,13 @@ function getTargetInfoPlistForType(type) {
+             },
+         });
+     }
++    else if (type === "device-activity-report") {
++        return plist_1.default.build({
++            NSExtension: {
++                NSExtensionPointIdentifier,
++            },
++        });
++    }
+     /*
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+@@ -335,6 +344,7 @@ function needsEmbeddedSwift(type) {
+         "matter",
+         "clip",
+         "device-activity-monitor",
++        "device-activity-report",
+         "shield-action",
+         "shield-configuration",
+     ].includes(type);
+@@ -369,6 +379,9 @@ function getFrameworksForType(type) {
+     else if (type === "device-activity-monitor") {
+         return ["DeviceActivity"];
+     }
++    else if (type === "device-activity-report") {
++        return ["DeviceActivity", "SwiftUI", "ManagedSettings"];
++    }
+     else if (type === "shield-action") {
+         return ["ManagedSettingsUI"];
+     }

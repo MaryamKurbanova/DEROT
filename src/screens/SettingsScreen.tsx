@@ -20,10 +20,6 @@ import { SomaticBreathing } from '../components/SomaticBreathing';
 import { DISTRACTION_APPS } from '../lib/distractionApps';
 import { getMonitoredAppIds, setAppMonitored } from '../lib/monitoredApps';
 import { androidRequestUsageStatsPermission } from '../lib/androidRotUsage';
-import {
-  isNativeRotUsageModulePresent,
-  rotUsageReportsAreAuthoritative,
-} from '../lib/rotUsageBridge';
 import { fontFamilies, spacing } from '../theme';
 
 const BG = '#000000';
@@ -58,16 +54,12 @@ export function SettingsScreen({
   const [breathingOpen, setBreathingOpen] = useState(false);
   const [breathSessionKey, setBreathSessionKey] = useState(0);
   const [breathSecondsLeft, setBreathSecondsLeft] = useState(BREATH_SESSION_SECONDS);
-  const [usageReportingOn, setUsageReportingOn] = useState(false);
-  const [nativeUsagePresent, setNativeUsagePresent] = useState(false);
 
   const readyDotOpacity = useRef(new Animated.Value(0.5)).current;
 
   const refresh = useCallback(async () => {
     const ids = await getMonitoredAppIds();
     setMonitored(new Set(ids));
-    setNativeUsagePresent(isNativeRotUsageModulePresent());
-    setUsageReportingOn(await rotUsageReportsAreAuthoritative());
   }, []);
 
   useEffect(() => {
@@ -164,34 +156,8 @@ export function SettingsScreen({
 
         <Text style={[styles.sectionLabel, styles.sectionSpacer]}>SCREEN_TIME</Text>
         {Platform.OS === 'ios' ? (
-          <>
-            <Text style={styles.caption}>
-              <Text style={styles.captionEm}>iPhone:</Text> Sticky uses Apple’s Screen Time APIs (Family
-              Controls / Device Activity), not Expo Go. There is no way for any third-party app to read the
-              Screen Time chart from Settings — only in-app authorization and monitoring like this. The
-              shipped app works for everyone once they tap Authorize here.
-            </Text>
-            <IosScreenTimePanel onChanged={() => void refresh()} />
-          </>
-        ) : (
-          <Text style={styles.caption}>
-            <Text style={styles.captionEm}>Android:</Text> UNROT reads foreground time for{' '}
-            <Text style={styles.captionEm}>monitored</Text> apps after you allow usage access. Use a dev
-            build (not Expo Go). <Text style={styles.captionEm}>iOS</Text> needs Family Controls in native
-            code.
-          </Text>
-        )}
-        <Text style={styles.usageStatus}>
-          STATUS: {usageReportingOn ? 'REPORTING' : 'NOT_CONNECTED'}
-          {nativeUsagePresent ? ' · UNROT_NATIVE' : ''}
-          {Platform.OS === 'android' && !nativeUsagePresent ? ' · ANDROID_USAGE' : ''}
-          {Platform.OS === 'ios' && usageReportingOn && !nativeUsagePresent
-            ? ' · IOS_STICKY'
-            : ''}
-          {Platform.OS === 'ios' && !usageReportingOn && !nativeUsagePresent
-            ? ' · SETUP_SCREEN_TIME'
-            : ''}
-        </Text>
+          <IosScreenTimePanel onChanged={() => void refresh()} />
+        ) : null}
         {Platform.OS === 'android' ? (
           <Pressable
             onPress={() => {
@@ -203,11 +169,6 @@ export function SettingsScreen({
             <Text style={styles.screenTimeBtnText}>ALLOW USAGE ACCESS</Text>
           </Pressable>
         ) : null}
-        <Text style={styles.screenTimeHint}>
-          {Platform.OS === 'android'
-            ? 'Usage access is not on the “app details” screen. Tap ALLOW USAGE ACCESS, then find UNROT in the list and turn Permit usage access on. Return here — status should show REPORTING.'
-            : 'System Settings below: notifications and other toggles for UNROT only—not the Screen Time picker (use the buttons above).'}
-        </Text>
         <Pressable
           onPress={() => {
             void Haptics.selectionAsync();
@@ -382,14 +343,6 @@ const styles = StyleSheet.create({
     color: FG,
     letterSpacing: 0.5,
   },
-  usageStatus: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    color: FG,
-    letterSpacing: 0.5,
-    marginBottom: spacing.sm,
-    opacity: 0.85,
-  },
   screenTimeBtn: {
     borderWidth: 1,
     borderColor: FG,
@@ -419,15 +372,6 @@ const styles = StyleSheet.create({
     color: GREY,
     letterSpacing: TRACK,
     textTransform: 'uppercase',
-  },
-  screenTimeHint: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    lineHeight: 16,
-    color: GREY,
-    letterSpacing: 0.3,
-    marginBottom: spacing.sm,
-    opacity: 0.95,
   },
   ghostBtn: {
     borderWidth: 1,

@@ -116,6 +116,68 @@ export function formatHourWindow(hour: number): string {
   return `${pad(hour)}:00–${pad(next)}:00`;
 }
 
+/** One-hour window starting at `startHour24` (0–23), e.g. 21 → "9:00 PM – 10:00 PM". */
+export function formatHourRangeAmPm(startHour24: number): string {
+  const piece = (h: number): string => {
+    const hour24 = ((h % 24) + 24) % 24;
+    const ampm = hour24 < 12 ? 'AM' : 'PM';
+    let h12 = hour24 % 12;
+    if (h12 === 0) h12 = 12;
+    return `${h12}:00 ${ampm}`;
+  };
+  return `${piece(startHour24)} – ${piece(startHour24 + 1)}`;
+}
+
+export type DangerZoneInsight = {
+  startHour: number;
+  state: string;
+  /** Joint (hour + mood) bucket count when that pairing is the signal; 0 if from peak-hour + top-mood fallback. */
+  jointCount: number;
+};
+
+/**
+ * “Danger zone”: the (local hour, mood) pair that shows up most in logs, else peak hour + most common mood.
+ * Needs at least three entries before we surface anything.
+ */
+export function computeDangerZoneInsight(entries: LogEntry[]): DangerZoneInsight | null {
+  if (entries.length < 3) return null;
+
+  const joint = new Map<string, number>();
+  for (const e of entries) {
+    const key = `${e.hour}\0${e.state}`;
+    joint.set(key, (joint.get(key) ?? 0) + 1);
+  }
+
+  let bestKey: string | null = null;
+  let bestN = 0;
+  for (const [k, n] of joint) {
+    if (bestKey == null || n > bestN || (n === bestN && k < bestKey)) {
+      bestN = n;
+      bestKey = k;
+    }
+  }
+
+  if (bestN >= 2 && bestKey != null) {
+    const tab = bestKey.indexOf('\0');
+    const hour = Number(bestKey.slice(0, tab));
+    const state = bestKey.slice(tab + 1);
+    if (!Number.isNaN(hour) && hour >= 0 && hour <= 23 && state) {
+      return { startHour: hour, state, jointCount: bestN };
+    }
+  }
+
+  const h = computePeakHour(entries);
+  const s = computePrimaryTrigger(entries);
+  if (h == null || s == null) return null;
+  return { startHour: h, state: s, jointCount: 0 };
+}
+
+export function formatDangerZoneSentence(insight: DangerZoneInsight): string {
+  const time = formatHourRangeAmPm(insight.startHour);
+  const feeling = truncateReason(insight.state.trim(), 48).toUpperCase();
+  return `You are most likely to 'Rot' at ${time} when feeling ${feeling}.`;
+}
+
 export function truncateReason(text: string, maxLen: number): string {
   const t = text.trim();
   if (t.length <= maxLen) return t;

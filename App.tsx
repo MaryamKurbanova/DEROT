@@ -10,7 +10,7 @@ import {
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
   getOnboardingComplete,
@@ -41,6 +41,15 @@ export default function App() {
       await SplashScreen.hideAsync();
     })();
   }, [fontsLoaded]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const { subscribeDerotUsageRecompute, recomputeDerotUsageTotals } =
+      require('./src/lib/derotIosScreenTime') as typeof import('./src/lib/derotIosScreenTime');
+    recomputeDerotUsageTotals();
+    const sub = subscribeDerotUsageRecompute();
+    return () => sub.remove();
+  }, []);
 
   if (!fontsLoaded || !bootReady) {
     return (

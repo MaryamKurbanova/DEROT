@@ -29,6 +29,10 @@ type Props = {
   targetAppId: string;
   targetLabel: string;
   onClose: () => void;
+  /** Extra line under “There’s no rush.” for intercept only (e.g. after breathing). */
+  interceptPreamble?: string;
+  /** Runs after `grantAccessPassForApp` succeeds for `purpose === 'intercept'`. */
+  onInterceptPassGranted?: () => void;
 };
 
 const BG = '#FFFFFF';
@@ -55,6 +59,8 @@ export function FocusWallScreen({
   targetAppId,
   targetLabel: _targetLabel,
   onClose,
+  interceptPreamble,
+  onInterceptPassGranted,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [mood, setMood] = useState<string | null>(null);
@@ -100,6 +106,7 @@ export function FocusWallScreen({
       }
       if (purpose === 'intercept') {
         await grantAccessPassForApp(targetAppId);
+        onInterceptPassGranted?.();
       }
     } catch (e) {
       if (__DEV__) {
@@ -108,7 +115,7 @@ export function FocusWallScreen({
     } finally {
       onClose();
     }
-  }, [mood, intent, purpose, targetAppId, onClose]);
+  }, [mood, intent, purpose, targetAppId, onClose, onInterceptPassGranted]);
 
   const onContinue = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
@@ -142,6 +149,9 @@ export function FocusWallScreen({
             }}
           >
             <Text style={styles.whisper}>There's no rush.</Text>
+            {purpose === 'intercept' && interceptPreamble ? (
+              <Text style={styles.preamble}>{interceptPreamble}</Text>
+            ) : null}
             <Text style={styles.title}>How are you feeling?</Text>
             <View style={styles.grid}>
               {MOOD_OPTIONS.map((label) => {
@@ -214,6 +224,15 @@ const styles = StyleSheet.create({
     color: INK_MUTED,
     marginBottom: 28,
     letterSpacing: 0.2,
+  },
+  preamble: {
+    fontFamily: fontFamilies.ui,
+    fontSize: 13,
+    color: INK,
+    marginTop: -20,
+    marginBottom: 20,
+    lineHeight: 19,
+    letterSpacing: 0.1,
   },
   title: {
     fontFamily: fontFamilies.uiSemi,
