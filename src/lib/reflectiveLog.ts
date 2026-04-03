@@ -12,6 +12,8 @@ export type LogEntry = {
   intent: string;
   /** Local hour 0–23 at log time */
   hour: number;
+  /** Distraction app id when logged from focus wall (optional for legacy entries). */
+  appId?: string;
 };
 
 function normalizeEntry(raw: unknown): LogEntry | null {
@@ -21,10 +23,12 @@ function normalizeEntry(raw: unknown): LogEntry | null {
   if (typeof ts !== 'number') return null;
   const hour = typeof o.hour === 'number' ? o.hour : new Date(ts).getHours();
   if (typeof o.state === 'string' && typeof o.intent === 'string') {
-    return { timestamp: ts, state: o.state, intent: o.intent, hour };
+    const appId = typeof o.appId === 'string' ? o.appId : undefined;
+    return { timestamp: ts, state: o.state, intent: o.intent, hour, appId };
   }
   if (typeof o.feeling === 'string' && typeof o.reason === 'string') {
-    return { timestamp: ts, state: o.feeling, intent: o.reason, hour };
+    const appId = typeof o.appId === 'string' ? o.appId : undefined;
+    return { timestamp: ts, state: o.feeling, intent: o.reason, hour, appId };
   }
   return null;
 }
@@ -32,6 +36,7 @@ function normalizeEntry(raw: unknown): LogEntry | null {
 export async function appendReflectiveLog(input: {
   state: string;
   intent: string;
+  appId?: string;
   at?: Date;
 }): Promise<void> {
   const d = input.at ?? new Date();
@@ -40,6 +45,7 @@ export async function appendReflectiveLog(input: {
     state: input.state,
     intent: input.intent.trim(),
     hour: d.getHours(),
+    ...(input.appId ? { appId: input.appId } : {}),
   };
   const prev = await loadAll();
   prev.unshift(entry);
@@ -47,8 +53,16 @@ export async function appendReflectiveLog(input: {
 }
 
 /** Focus wall / reflective log — same storage as `appendReflectiveLog`. */
-export async function logReflection(input: { mood: string; intent: string }): Promise<void> {
-  await appendReflectiveLog({ state: input.mood, intent: input.intent });
+export async function logReflection(input: {
+  mood: string;
+  intent: string;
+  appId?: string;
+}): Promise<void> {
+  await appendReflectiveLog({
+    state: input.mood,
+    intent: input.intent,
+    ...(input.appId ? { appId: input.appId } : {}),
+  });
 }
 
 async function loadAll(): Promise<LogEntry[]> {
@@ -174,8 +188,27 @@ export function computeDangerZoneInsight(entries: LogEntry[]): DangerZoneInsight
 
 export function formatDangerZoneSentence(insight: DangerZoneInsight): string {
   const time = formatHourRangeAmPm(insight.startHour);
-  const feeling = truncateReason(insight.state.trim(), 48).toUpperCase();
-  return `You are most likely to 'Rot' at ${time} when feeling ${feeling}.`;
+  const raw = truncateReason(insight.state.trim(), 48);
+  const feeling =
+    raw.length > 0 ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : raw;
+  return `You are most likely to rot at ${time} when feeling ${feeling}.`;
+}
+
+/** HUD line: `MOST LIKELY TO ROT: [8:00 PM - 9:00 PM] // [ANXIOUS]` */
+export function formatDangerZoneHUDLine(insight: DangerZoneInsight): string {
+  const piece = (hour24: number): string => {
+    const h = ((hour24 % 24) + 24) % 24;
+    const ampm = h < 12 ? 'AM' : 'PM';
+    let h12 = h % 12;
+    if (h12 === 0) h12 = 12;
+    return `${h12}:00 ${ampm}`;
+  };
+  const start = insight.startHour;
+  const win = `[${piece(start)} - ${piece(start + 1)}]`;
+  const raw = truncateReason(insight.state.trim(), 24);
+  const tagRaw = raw.length > 0 ? raw.replace(/\s+/g, '_').toUpperCase() : 'UNKNOWN';
+  const tag = `[${tagRaw}]`;
+  return `MOST LIKELY TO ROT: ${win} // ${tag}`;
 }
 
 export function truncateReason(text: string, maxLen: number): string {

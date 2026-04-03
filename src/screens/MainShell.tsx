@@ -15,9 +15,10 @@ import {
 } from '../lib/interceptBridge';
 import { iosEnsureStickyMonitoring, iosStickyReportsAreAuthoritative } from '../lib/iosStickyRotUsage';
 import { getMonitoredAppIds, isAppMonitored } from '../lib/monitoredApps';
+import { recordFocusWallTrigger } from '../lib/rotVelocity';
 import { setLastActiveAppId } from '../lib/usageStats';
 import { registerInterceptWallHandler, requestInterceptWall } from '../lib/wallBridge';
-import { spacing } from '../theme';
+import { monolith, spacing } from '../theme';
 import { BreathingInterceptModal } from './BreathingInterceptModal';
 import { DashboardScreen } from './DashboardScreen';
 import { FocusWallScreen, type FocusWallPurpose } from './FocusWallScreen';
@@ -67,6 +68,7 @@ export function MainShell({ onReplayOnboarding }: Props) {
     if (!show) return;
     await setLastActiveAppId(appId);
     const needBreathFirst = await shouldRequireBreathingBeforeReflectiveLog();
+    await recordFocusWallTrigger();
     setInterceptSession(needBreathFirst ? { kind: 'breath', app } : { kind: 'reflect', app });
   }, []);
 
@@ -146,7 +148,7 @@ export function MainShell({ onReplayOnboarding }: Props) {
   return (
     <>
       <StatusBar style="light" />
-      <View style={[styles.root, { backgroundColor: '#000000' }]}>
+      <View style={[styles.root, { backgroundColor: monolith.surface }]}>
         <View style={styles.body}>
           {screen === 'dashboard' ? (
             <DashboardScreen statsTick={statsTick} onOpenSettings={() => setScreen('settings')} />

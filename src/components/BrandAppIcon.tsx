@@ -1,8 +1,8 @@
-import { siSnapchat, siTiktok } from 'simple-icons';
+import { siSnapchat, siTiktok, siYoutube } from 'simple-icons';
 import { useId } from 'react';
 import Svg, { Circle, Defs, G, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 
-export type BrandAppId = 'tiktok' | 'snapchat' | 'instagram' | 'facebook';
+export type BrandAppId = 'tiktok' | 'snapchat' | 'instagram' | 'facebook' | 'youtube';
 
 type Props = {
   name: BrandAppId;
@@ -56,6 +56,15 @@ export function BrandAppIcon({ name, size }: Props) {
             strokeLinejoin="round"
           />
         </G>
+      </Svg>
+    );
+  }
+
+  if (name === 'youtube') {
+    const d = siYoutube.path;
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" accessible={false}>
+        <Path d={d} fill="#FF0000" />
       </Svg>
     );
   }

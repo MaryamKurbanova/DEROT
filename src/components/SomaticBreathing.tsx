@@ -1,19 +1,33 @@
 import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { colors, fontFamilies, spacing } from '../theme';
 
-const INHALE_MS = 5000;
-const EXHALE_MS = 5000;
+/** Slightly elongated for a calmer, premium cadence (~11.4s per full cycle). */
+const INHALE_MS = 5600;
+const EXHALE_MS = 5800;
 
-/** Inner disc starts tiny; scales to 1 = flush with inside of the outer ring. */
+/** Original simple crossfade — clearer, slightly “wavier” handoff. */
+/** Audible but calm — inhale WAV peaks higher than exhale in the files. */
+const MAX_BREATH_VOL = 0.27;
+const CROSSFADE_MS = 480;
+const CROSSFADE_STEPS = 16;
+
 const SCALE_MIN = 0.08;
 const SCALE_MAX = 1;
 
-/** Outer ring subtle pulse (1–2% feel). */
-const RING_INHALE_SCALE = 1.017;
+/** Subtle inhale overshoot target before settling to 1. */
+const INHALE_OVERSHOOT = 1.038;
+const OVERSHOOT_FRACTION = 0.82;
+
+/** Main breath curve: slow start/end, organic mid (health-app feel). */
+const easeBreathIn = Easing.bezier(0.42, 0, 0.58, 1);
+const easeSettle = Easing.out(Easing.cubic);
+const easeBreathOut = Easing.bezier(0.33, 0.08, 0.25, 1);
+
+const RING_INHALE_SCALE = 1.014;
 const RING_EXHALE_SCALE = 1;
 
 type Phase = 'inhale' | 'exhale';
@@ -21,7 +35,6 @@ type Phase = 'inhale' | 'exhale';
 type Props = {
   variant?: 'default' | 'zen';
   secondsRemaining?: number;
-  /** Outer disc diameter (px). */
   outerDiameter?: number;
 };
 
@@ -32,10 +45,46 @@ function formatClock(totalSec: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function steppedCrossfade(
+  incoming: Audio.Sound,
+  outgoing: Audio.Sound | null,
+  targetVol: number,
+): Promise<void> {
+  try {
+    await incoming.setVolumeAsync(0);
+    await incoming.setPositionAsync(0);
+    await incoming.playAsync();
+  } catch {
+    return;
+  }
+  const dt = CROSSFADE_MS / CROSSFADE_STEPS;
+  for (let i = 0; i <= CROSSFADE_STEPS; i++) {
+    const p = i / CROSSFADE_STEPS;
+    const eased = 0.5 - 0.5 * Math.cos(Math.PI * p);
+    try {
+      await incoming.setVolumeAsync(eased * targetVol);
+      if (outgoing) await outgoing.setVolumeAsync((1 - eased) * targetVol * 0.94);
+    } catch {
+      /* ignore */
+    }
+    await sleep(dt);
+  }
+  if (outgoing) {
+    try {
+      await outgoing.stopAsync();
+      await outgoing.setVolumeAsync(targetVol);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 const DEFAULT_OUTER = 200;
 const RING_STROKE = 2;
-
-const easing = Easing.inOut(Easing.ease);
 
 export function SomaticBreathing({
   variant = 'default',
@@ -43,15 +92,20 @@ export function SomaticBreathing({
   outerDiameter = DEFAULT_OUTER,
 }: Props) {
   const scale = useRef(new Animated.Value(SCALE_MIN)).current;
-  const shellOpacity = useRef(new Animated.Value(variant === 'zen' ? 0.48 : 0.42)).current;
-  const glowOpacity = useRef(new Animated.Value(variant === 'zen' ? 0.07 : 0.03)).current;
+  const shellOpacity = useRef(new Animated.Value(variant === 'zen' ? 0.5 : 0.42)).current;
+  const glowOpacity = useRef(new Animated.Value(variant === 'zen' ? 0.08 : 0.03)).current;
   const ringPulse = useRef(new Animated.Value(RING_EXHALE_SCALE)).current;
+  const rippleScale = useRef(new Animated.Value(1)).current;
+  const rippleOpacity = useRef(new Animated.Value(0)).current;
+  const labelOpacity = useRef(new Animated.Value(1)).current;
 
   const [phase, setPhase] = useState<Phase>('inhale');
-  const prevPhaseRef = useRef<Phase | null>(null);
-  const breathSoundRef = useRef<Audio.Sound | null>(null);
-  const isZen = variant === 'zen';
+  const inhaleRef = useRef<Audio.Sound | null>(null);
+  const exhaleRef = useRef<Audio.Sound | null>(null);
+  const activeBreathRef = useRef<Audio.Sound | null>(null);
+  const crossfadeLock = useRef(false);
 
+  const isZen = variant === 'zen';
   const gradientId = useMemo(() => `breath-rg-${Math.random().toString(36).slice(2, 10)}`, []);
 
   useEffect(() => {
@@ -68,69 +122,194 @@ export function SomaticBreathing({
     })();
   }, []);
 
+  /** Preload breath cues (simple airy pink beds — see generate-breath-wavs.mjs). */
   useEffect(() => {
-    const inhale = Animated.parallel([
-      Animated.timing(scale, {
-        toValue: SCALE_MAX,
-        duration: INHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-      Animated.timing(shellOpacity, {
-        toValue: isZen ? 0.96 : 0.88,
-        duration: INHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-      Animated.timing(glowOpacity, {
-        toValue: isZen ? 0.44 : 0.12,
-        duration: INHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-      Animated.timing(ringPulse, {
-        toValue: RING_INHALE_SCALE,
-        duration: INHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-    ]);
-    const exhale = Animated.parallel([
-      Animated.timing(scale, {
-        toValue: SCALE_MIN,
-        duration: EXHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-      Animated.timing(shellOpacity, {
-        toValue: isZen ? 0.48 : 0.42,
-        duration: EXHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-      Animated.timing(glowOpacity, {
-        toValue: isZen ? 0.07 : 0.03,
-        duration: EXHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-      Animated.timing(ringPulse, {
-        toValue: RING_EXHALE_SCALE,
-        duration: EXHALE_MS,
-        easing,
-        useNativeDriver: true,
-      }),
-    ]);
-    const loop = Animated.loop(Animated.sequence([inhale, exhale]));
+    let cancelled = false;
+    void (async () => {
+      try {
+        const inH = require('../../assets/sounds/breath-inhale.wav');
+        const exH = require('../../assets/sounds/breath-exhale.wav');
+        const androidInit =
+          Platform.OS === 'android'
+            ? { androidImplementation: 'MediaPlayer' as const }
+            : {};
+        const [{ sound: sIn }, { sound: sEx }] = await Promise.all([
+          Audio.Sound.createAsync(inH, { shouldPlay: false, volume: 0, ...androidInit }),
+          Audio.Sound.createAsync(exH, { shouldPlay: false, volume: 0, ...androidInit }),
+        ]);
+        if (cancelled) {
+          void sIn.unloadAsync();
+          void sEx.unloadAsync();
+          return;
+        }
+        inhaleRef.current = sIn;
+        exhaleRef.current = sEx;
+      } catch {
+        /* optional assets — session stays visual-only */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      void inhaleRef.current?.unloadAsync();
+      void exhaleRef.current?.unloadAsync();
+      inhaleRef.current = null;
+      exhaleRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    labelOpacity.setValue(0);
+    Animated.timing(labelOpacity, {
+      toValue: 1,
+      duration: isZen ? 620 : 480,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+  }, [phase, labelOpacity, isZen]);
+
+  const inhaleAnim = useMemo(
+    () =>
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(scale, {
+            toValue: INHALE_OVERSHOOT,
+            duration: INHALE_MS * OVERSHOOT_FRACTION,
+            easing: easeBreathIn,
+            useNativeDriver: true,
+          }),
+          Animated.timing(shellOpacity, {
+            toValue: isZen ? 0.94 : 0.88,
+            duration: INHALE_MS * OVERSHOOT_FRACTION,
+            easing: easeBreathIn,
+            useNativeDriver: true,
+          }),
+          Animated.timing(glowOpacity, {
+            toValue: isZen ? 0.5 : 0.14,
+            duration: INHALE_MS * OVERSHOOT_FRACTION,
+            easing: easeBreathIn,
+            useNativeDriver: true,
+          }),
+          Animated.timing(ringPulse, {
+            toValue: RING_INHALE_SCALE,
+            duration: INHALE_MS * OVERSHOOT_FRACTION,
+            easing: easeBreathIn,
+            useNativeDriver: true,
+          }),
+          Animated.sequence([
+            Animated.parallel([
+              Animated.timing(rippleOpacity, {
+                toValue: 0.14,
+                duration: INHALE_MS * 0.38,
+                easing: Easing.out(Easing.quad),
+                useNativeDriver: true,
+              }),
+              Animated.timing(rippleScale, {
+                toValue: 1.095,
+                duration: INHALE_MS * 0.5,
+                easing: easeBreathIn,
+                useNativeDriver: true,
+              }),
+            ]),
+            Animated.parallel([
+              Animated.timing(rippleOpacity, {
+                toValue: 0,
+                duration: INHALE_MS * 0.35,
+                easing: Easing.in(Easing.quad),
+                useNativeDriver: true,
+              }),
+              Animated.timing(rippleScale, {
+                toValue: 1,
+                duration: INHALE_MS * 0.35,
+                easing: easeSettle,
+                useNativeDriver: true,
+              }),
+            ]),
+          ]),
+        ]),
+        Animated.parallel([
+          Animated.timing(scale, {
+            toValue: SCALE_MAX,
+            duration: INHALE_MS * (1 - OVERSHOOT_FRACTION),
+            easing: easeSettle,
+            useNativeDriver: true,
+          }),
+          Animated.timing(shellOpacity, {
+            toValue: isZen ? 0.9 : 0.85,
+            duration: INHALE_MS * (1 - OVERSHOOT_FRACTION),
+            easing: easeSettle,
+            useNativeDriver: true,
+          }),
+          Animated.timing(glowOpacity, {
+            toValue: isZen ? 0.42 : 0.11,
+            duration: INHALE_MS * (1 - OVERSHOOT_FRACTION),
+            easing: easeSettle,
+            useNativeDriver: true,
+          }),
+          Animated.timing(ringPulse, {
+            toValue: 1.006,
+            duration: INHALE_MS * (1 - OVERSHOOT_FRACTION),
+            easing: easeSettle,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    [
+      scale,
+      shellOpacity,
+      glowOpacity,
+      ringPulse,
+      rippleOpacity,
+      rippleScale,
+      isZen,
+    ],
+  );
+
+  const exhaleAnim = useMemo(
+    () =>
+      Animated.parallel([
+        Animated.timing(scale, {
+          toValue: SCALE_MIN,
+          duration: EXHALE_MS,
+          easing: easeBreathOut,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shellOpacity, {
+          toValue: isZen ? 0.5 : 0.42,
+          duration: EXHALE_MS,
+          easing: easeBreathOut,
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowOpacity, {
+          toValue: isZen ? 0.07 : 0.03,
+          duration: EXHALE_MS,
+          easing: easeBreathOut,
+          useNativeDriver: true,
+        }),
+        Animated.timing(ringPulse, {
+          toValue: RING_EXHALE_SCALE,
+          duration: EXHALE_MS,
+          easing: easeBreathOut,
+          useNativeDriver: true,
+        }),
+      ]),
+    [scale, shellOpacity, glowOpacity, ringPulse, isZen],
+  );
+
+  useEffect(() => {
+    rippleOpacity.setValue(0);
+    rippleScale.setValue(1);
+    const loop = Animated.loop(Animated.sequence([inhaleAnim, exhaleAnim]));
     loop.start();
     return () => {
       loop.stop();
       scale.setValue(SCALE_MIN);
-      shellOpacity.setValue(isZen ? 0.48 : 0.42);
+      shellOpacity.setValue(isZen ? 0.5 : 0.42);
       glowOpacity.setValue(isZen ? 0.07 : 0.03);
       ringPulse.setValue(RING_EXHALE_SCALE);
+      rippleOpacity.setValue(0);
+      rippleScale.setValue(1);
     };
-  }, [scale, shellOpacity, glowOpacity, ringPulse, isZen]);
+  }, [inhaleAnim, exhaleAnim, scale, shellOpacity, glowOpacity, ringPulse, rippleOpacity, rippleScale, isZen]);
 
   useEffect(() => {
     setPhase('inhale');
@@ -157,88 +336,34 @@ export function SomaticBreathing({
   }, []);
 
   useEffect(() => {
-    if (prevPhaseRef.current === phase) return;
-    prevPhaseRef.current = phase;
-
-    const src =
-      phase === 'inhale'
-        ? require('../../assets/sounds/breath-inhale.wav')
-        : require('../../assets/sounds/breath-exhale.wav');
-
-    let cancelled = false;
-
+    if (!isZen) return;
+    const sIn = inhaleRef.current;
+    const sEx = exhaleRef.current;
+    if (!sIn || !sEx) return;
+    if (crossfadeLock.current) return;
     void (async () => {
-      const prev = breathSoundRef.current;
-      breathSoundRef.current = null;
-      if (prev) {
-        try {
-          await prev.stopAsync();
-        } catch {
-          /* ignore */
-        }
-        try {
-          await prev.unloadAsync();
-        } catch {
-          /* ignore */
-        }
-      }
-      if (cancelled) return;
-
-      try {
-        const { sound } = await Audio.Sound.createAsync(
-          src,
-          {
-            shouldPlay: true,
-            volume: 0.38,
-            isLooping: false,
-          },
-          (st) => {
-            if (!st.isLoaded || !st.didJustFinish) return;
-            void sound.unloadAsync();
-            if (breathSoundRef.current === sound) breathSoundRef.current = null;
-          },
-        );
-        if (cancelled) {
-          void sound.unloadAsync();
-          return;
-        }
-        breathSoundRef.current = sound;
-      } catch {
-        /* ignore */
-      }
+      crossfadeLock.current = true;
+      const incoming = phase === 'inhale' ? sIn : sEx;
+      const outgoing =
+        activeBreathRef.current && activeBreathRef.current !== incoming
+          ? activeBreathRef.current
+          : null;
+      activeBreathRef.current = incoming;
+      await steppedCrossfade(incoming, outgoing, MAX_BREATH_VOL);
+      crossfadeLock.current = false;
     })();
+  }, [phase, isZen]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [phase]);
-
-  useEffect(() => {
-    return () => {
-      const s = breathSoundRef.current;
-      breathSoundRef.current = null;
-      if (s) void s.unloadAsync();
-    };
-  }, []);
-
-  /** Zen: transition pulse + inhale ramp + soft exhale. */
+  /** Zen: gentle inhale ramp haptics + soft exhale boundary. */
   useEffect(() => {
     if (!isZen) return;
     const timeouts: ReturnType<typeof setTimeout>[] = [];
-    void Haptics.selectionAsync();
-
     if (phase === 'inhale') {
-      const ramp: { at: number; style: Haptics.ImpactFeedbackStyle }[] = [
-        { at: 0, style: Haptics.ImpactFeedbackStyle.Light },
-        { at: 1100, style: Haptics.ImpactFeedbackStyle.Light },
-        { at: 2300, style: Haptics.ImpactFeedbackStyle.Medium },
-        { at: 3500, style: Haptics.ImpactFeedbackStyle.Medium },
-        { at: 4700, style: Haptics.ImpactFeedbackStyle.Light },
-      ];
-      for (const { at, style } of ramp) {
+      const marks = [0, Math.floor(INHALE_MS * 0.28), Math.floor(INHALE_MS * 0.55), Math.floor(INHALE_MS * 0.78)];
+      for (const at of marks) {
         timeouts.push(
           setTimeout(() => {
-            void Haptics.impactAsync(style);
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
           }, at),
         );
       }
@@ -246,17 +371,16 @@ export function SomaticBreathing({
       timeouts.push(
         setTimeout(() => {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-        }, 100),
+        }, 40),
       );
       timeouts.push(
         setTimeout(() => {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-        }, Math.floor(EXHALE_MS * 0.52)),
+        }, Math.floor(EXHALE_MS * 0.48)),
       );
     }
-
     return () => {
-      for (const id of timeouts) clearTimeout(id);
+      for (const t of timeouts) clearTimeout(t);
     };
   }, [phase, isZen]);
 
@@ -264,8 +388,7 @@ export function SomaticBreathing({
   const showTimer = isZen && secondsRemaining != null;
 
   const d = outerDiameter;
-  /** Zen: white ring on black; default: inset ring stroke. */
-  const ringStroke = isZen ? 2 : RING_STROKE;
+  const ringStroke = isZen ? 1.5 : RING_STROKE;
   const innerD = d - 2 * ringStroke;
 
   const outerRingStyle = {
@@ -281,11 +404,41 @@ export function SomaticBreathing({
 
       <Animated.View style={{ transform: [{ scale: ringPulse }] }}>
         <View style={[s.outerRing, outerRingStyle]}>
-          <Text style={s.labelInRing} pointerEvents="none">
-            {phase === 'inhale' ? 'Inhale' : 'Exhale'}
-          </Text>
+          {isZen ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.backHalo,
+                {
+                  width: d * 1.35,
+                  height: d * 1.35,
+                  borderRadius: (d * 1.35) / 2,
+                  opacity: glowOpacity,
+                },
+              ]}
+            />
+          ) : null}
+
+          <Animated.Text style={[s.labelInRing, { opacity: labelOpacity }]} pointerEvents="none">
+            {phase === 'inhale' ? 'Breathe in' : isZen ? 'Soft release' : 'Ease out'}
+          </Animated.Text>
 
           <View style={s.innerCenterSlot}>
+            {isZen ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.rippleRing,
+                  {
+                    width: innerD + 28,
+                    height: innerD + 28,
+                    borderRadius: (innerD + 28) / 2,
+                    opacity: rippleOpacity,
+                    transform: [{ scale: rippleScale }],
+                  },
+                ]}
+              />
+            ) : null}
             <View style={[styles.innerStage, { width: innerD, height: innerD }]}>
               <Animated.View
                 style={[
@@ -306,7 +459,7 @@ export function SomaticBreathing({
                       height: innerD * 1.14,
                       borderRadius: (innerD * 1.14) / 2,
                       opacity: glowOpacity,
-                      backgroundColor: isZen ? 'rgba(255, 255, 255, 0.35)' : 'rgba(80, 80, 92, 0.22)',
+                      backgroundColor: isZen ? 'rgba(200, 210, 255, 0.28)' : 'rgba(80, 80, 92, 0.22)',
                     },
                   ]}
                 />
@@ -324,9 +477,9 @@ export function SomaticBreathing({
                       >
                         {isZen
                           ? [
-                              <Stop key="z0" offset="0%" stopColor="#FFFFFF" stopOpacity={0.72} />,
-                              <Stop key="z1" offset="45%" stopColor="#FFFFFF" stopOpacity={0.42} />,
-                              <Stop key="z2" offset="100%" stopColor="#FFFFFF" stopOpacity={0.18} />,
+                              <Stop key="z0" offset="0%" stopColor="#F8F8FF" stopOpacity={0.55} />,
+                              <Stop key="z1" offset="42%" stopColor="#C8D0F0" stopOpacity={0.32} />,
+                              <Stop key="z2" offset="100%" stopColor="#6A6A8C" stopOpacity={0.14} />,
                             ]
                           : [
                               <Stop key="d0" offset="0%" stopColor="#8E8E9A" stopOpacity={0.38} />,
@@ -366,17 +519,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  backHalo: {
+    position: 'absolute',
+    alignSelf: 'center',
+    backgroundColor: 'rgba(130, 140, 220, 0.12)',
+  },
+  rippleRing: {
+    position: 'absolute',
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+  },
 });
 
 const stylesZen = StyleSheet.create({
   root: {
     width: '100%',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    backgroundColor: '#000000',
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.sm,
-    borderRadius: 0,
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    paddingVertical: spacing.sm,
   },
   timer: {
     fontFamily: fontFamilies.mono,
@@ -388,22 +550,24 @@ const stylesZen = StyleSheet.create({
     textAlign: 'center',
   },
   outerRing: {
-    overflow: 'hidden',
+    overflow: 'visible',
     position: 'relative',
-    backgroundColor: '#000000',
-    borderColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    borderColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   labelInRing: {
     position: 'absolute',
-    top: 14,
+    top: 18,
     left: 0,
     right: 0,
-    zIndex: 2,
+    zIndex: 4,
     textAlign: 'center',
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 18,
-    letterSpacing: -0.2,
-    color: 'rgba(255, 255, 255, 0.55)',
+    fontFamily: fontFamilies.uiLight,
+    fontSize: 14,
+    letterSpacing: 3,
+    color: 'rgba(255, 255, 255, 0.34)',
   },
   innerCenterSlot: {
     ...StyleSheet.absoluteFillObject,
@@ -428,7 +592,7 @@ const stylesDefault = StyleSheet.create({
     textAlign: 'center',
   },
   outerRing: {
-    borderColor: 'rgba(60, 60, 67, 0.22)',
+    borderColor: 'rgba(60, 60, 67,0.22)',
     backgroundColor: 'rgba(60, 60, 67, 0.03)',
     overflow: 'hidden',
     position: 'relative',
@@ -440,10 +604,10 @@ const stylesDefault = StyleSheet.create({
     right: 0,
     zIndex: 2,
     textAlign: 'center',
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 18,
-    letterSpacing: -0.2,
-    color: colors.inkMuted,
+    fontFamily: fontFamilies.uiLight,
+    fontSize: 16,
+    letterSpacing: 0.8,
+    color: 'rgba(60, 60, 67, 0.45)',
   },
   innerCenterSlot: {
     ...StyleSheet.absoluteFillObject,

@@ -12,6 +12,7 @@ import {
   UIManager,
   View,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { grantAccessPassForApp } from '../lib/accessPass';
 import { logReflection } from '../lib/reflectiveLog';
@@ -29,9 +30,7 @@ type Props = {
   targetAppId: string;
   targetLabel: string;
   onClose: () => void;
-  /** Extra line under “There’s no rush.” for intercept only (e.g. after breathing). */
   interceptPreamble?: string;
-  /** Runs after `grantAccessPassForApp` succeeds for `purpose === 'intercept'`. */
   onInterceptPassGranted?: () => void;
 };
 
@@ -102,7 +101,7 @@ export function FocusWallScreen({
     const i = intent;
     try {
       if (m && i) {
-        await logReflection({ mood: m, intent: i });
+        await logReflection({ mood: m, intent: i, appId: targetAppId });
       }
       if (purpose === 'intercept') {
         await grantAccessPassForApp(targetAppId);
@@ -136,6 +135,7 @@ export function FocusWallScreen({
 
   return (
     <Modal visible={visible} animationType="fade" transparent={false}>
+      <StatusBar style="dark" />
       <View style={[styles.root, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
         <ScrollView
           contentContainerStyle={styles.scrollContent}

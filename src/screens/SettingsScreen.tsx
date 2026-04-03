@@ -1,40 +1,18 @@
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Animated,
-  AppState,
-  Easing,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, AppState, Easing, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IosScreenTimePanel } from '../components/IosScreenTimePanel';
-import { SomaticBreathing } from '../components/SomaticBreathing';
+import { MonitoredAppIcon } from '../components/MonitoredAppIcon';
 import { DISTRACTION_APPS } from '../lib/distractionApps';
 import { getMonitoredAppIds, setAppMonitored } from '../lib/monitoredApps';
 import { androidRequestUsageStatsPermission } from '../lib/androidRotUsage';
-import { fontFamilies, spacing } from '../theme';
+import { fontFamilies, monolith, spacing, typeScale } from '../theme';
 
-const BG = '#000000';
-const FG = '#FFFFFF';
-const GREY = '#888888';
-const TRACK = 2;
-
-const BREATH_SESSION_SECONDS = 30;
-
-function formatBreathClock(totalSec: number): string {
-  const s = Math.max(0, Math.floor(totalSec));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r.toString().padStart(2, '0')}`;
-}
+const BG = monolith.surface;
+const FG = monolith.primary;
+const GREY = monolith.muted;
+const TRACK = 4;
 
 type Props = {
   tabBarInset: number;
@@ -51,9 +29,6 @@ export function SettingsScreen({
 }: Props) {
   const insets = useSafeAreaInsets();
   const [monitored, setMonitored] = useState<Set<string>>(new Set());
-  const [breathingOpen, setBreathingOpen] = useState(false);
-  const [breathSessionKey, setBreathSessionKey] = useState(0);
-  const [breathSecondsLeft, setBreathSecondsLeft] = useState(BREATH_SESSION_SECONDS);
 
   const readyDotOpacity = useRef(new Animated.Value(0.5)).current;
 
@@ -72,20 +47,6 @@ export function SettingsScreen({
     });
     return () => sub.remove();
   }, [refresh]);
-
-  useEffect(() => {
-    if (!breathingOpen) return;
-    const id = setInterval(() => {
-      setBreathSecondsLeft((s) => Math.max(0, s - 1));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [breathingOpen, breathSessionKey]);
-
-  useEffect(() => {
-    if (!breathingOpen || breathSecondsLeft > 0) return;
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setBreathingOpen(false);
-  }, [breathingOpen, breathSecondsLeft]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -142,17 +103,42 @@ export function SettingsScreen({
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.sectionLabel}>MONITORED_APPS</Text>
-        {DISTRACTION_APPS.map((app) => (
-          <View key={app.id} style={styles.row}>
-            <Text style={styles.rowLabel}>{app.label}</Text>
-            <Switch
-              value={monitored.has(app.id)}
-              onValueChange={(v) => void toggleApp(app.id, v)}
-              trackColor={{ false: '#333', true: '#555' }}
-              thumbColor={monitored.has(app.id) ? FG : GREY}
-            />
-          </View>
-        ))}
+        <View style={styles.appGrid}>
+          {DISTRACTION_APPS.map((app) => {
+            const on = monitored.has(app.id);
+            return (
+              <Pressable
+                key={app.id}
+                onPress={() => void toggleApp(app.id, !on)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={`${app.label}, ${on ? 'monitored' : 'not monitored'}. Tap to toggle.`}
+                android_ripple={
+                  Platform.OS === 'android' ? { color: 'rgba(255,255,255,0.12)' } : undefined
+                }
+                style={({ pressed }) => [
+                  styles.appTile,
+                  on && styles.appTileMonitored,
+                  on && Platform.OS === 'android' && styles.appTileMonitoredAndroid,
+                  pressed && styles.appTilePressed,
+                ]}
+              >
+                {on ? <View style={styles.appTileMonitorDot} pointerEvents="none" /> : null}
+                <View style={styles.appTileInner}>
+                  <View style={styles.appTileIconWrap}>
+                    <MonitoredAppIcon appId={app.id} size={50} muted={!on} />
+                  </View>
+                  <Text
+                    style={[styles.appTileLabel, !on && styles.appTileLabelMuted]}
+                    numberOfLines={2}
+                  >
+                    {app.label}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
 
         <Text style={[styles.sectionLabel, styles.sectionSpacer]}>SCREEN_TIME</Text>
         {Platform.OS === 'ios' ? (
@@ -189,24 +175,7 @@ export function SettingsScreen({
           pops up when you click on the app again.
         </Text>
 
-        <Text style={[styles.sectionLabel, styles.sectionSpacer]}>› BREATHING</Text>
-        <Pressable
-          onPress={() => {
-            void Haptics.selectionAsync();
-            setBreathSecondsLeft(BREATH_SESSION_SECONDS);
-            setBreathSessionKey((k) => k + 1);
-            setBreathingOpen(true);
-          }}
-          style={({ pressed }) => [
-            styles.ghostBtn,
-            styles.ghostBtnCentered,
-            pressed && { opacity: 0.7 },
-          ]}
-        >
-          <Text style={[styles.ghostBtnText, styles.ghostBtnTextCentered]}>BREATHING TOOL</Text>
-        </Pressable>
-
-        <Text style={[styles.sectionLabel, styles.sectionSpacer]}>› REFLECTIVE_LOG</Text>
+        <Text style={[styles.sectionSpacer, styles.toolSectionLabel]}>› REFLECTIVE_LOG</Text>
         <Pressable
           onPress={() => {
             void Haptics.selectionAsync();
@@ -235,41 +204,6 @@ export function SettingsScreen({
           </Pressable>
         ) : null}
       </ScrollView>
-
-      <Modal
-        visible={breathingOpen}
-        animationType="fade"
-        presentationStyle="fullScreen"
-        onRequestClose={() => setBreathingOpen(false)}
-      >
-        <View
-          style={[
-            styles.breathModal,
-            { paddingTop: insets.top + spacing.sm, paddingBottom: tabBarInset },
-          ]}
-        >
-          <Pressable
-            onPress={() => {
-              void Haptics.selectionAsync();
-              setBreathingOpen(false);
-            }}
-            hitSlop={12}
-            style={({ pressed }) => [styles.breathCloseBtn, pressed && { opacity: 0.55 }]}
-          >
-            <Text style={styles.backText}>← CLOSE</Text>
-          </Pressable>
-          <Text style={styles.breathTimerTop} accessibilityRole="timer">
-            {formatBreathClock(breathSecondsLeft)}
-          </Text>
-          <View style={styles.breathCenter}>
-            <SomaticBreathing
-              key={breathSessionKey}
-              variant="zen"
-              outerDiameter={300}
-            />
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -304,31 +238,93 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
   sectionLabel: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: GREY,
-    letterSpacing: 1.5,
+    ...typeScale.label,
     marginBottom: spacing.sm,
   },
   sectionSpacer: {
     marginTop: spacing.xl,
   },
-  row: {
+  /** Softer subheads above breathing / reflective (matches older settings). */
+  toolSectionLabel: {
+    fontFamily: fontFamilies.mono,
+    fontSize: 9,
+    color: GREY,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    marginBottom: spacing.sm,
+  },
+  appGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  appTile: {
+    width: '31%',
+    maxWidth: '33%',
+    flexGrow: 0,
+    flexShrink: 0,
+    aspectRatio: 1,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.11)',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  appTileMonitored: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,184,0,0.55)',
+    backgroundColor: 'rgba(255,184,0,0.09)',
+  },
+  appTileMonitoredAndroid: {
+    elevation: 5,
+  },
+  appTilePressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
+  },
+  appTileMonitorDot: {
+    position: 'absolute',
+    top: 9,
+    right: 9,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: monolith.signalAmber,
+    zIndex: 1,
+  },
+  appTileInner: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
-    borderStyle: 'dotted',
+    width: '100%',
   },
-  rowLabel: {
+  appTileIconWrap: {
     flex: 1,
-    paddingRight: spacing.md,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+  },
+  appTileLabel: {
     fontFamily: fontFamilies.mono,
-    fontSize: 13,
+    fontSize: 9,
+    lineHeight: 12,
     color: FG,
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+    width: '100%',
+    marginTop: 4,
+    paddingHorizontal: 2,
+  },
+  appTileLabelMuted: {
+    color: GREY,
+    opacity: 0.85,
   },
   caption: {
     fontFamily: fontFamilies.mono,
@@ -345,7 +341,8 @@ const styles = StyleSheet.create({
   },
   screenTimeBtn: {
     borderWidth: 1,
-    borderColor: FG,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     paddingVertical: 14,
     paddingHorizontal: spacing.md,
     marginBottom: spacing.sm,
@@ -360,7 +357,8 @@ const styles = StyleSheet.create({
   },
   screenTimeBtnSecondary: {
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: monolith.border,
+    backgroundColor: 'rgba(255,255,255,0.02)',
     paddingVertical: 12,
     paddingHorizontal: spacing.md,
     marginBottom: spacing.md,
@@ -373,6 +371,7 @@ const styles = StyleSheet.create({
     letterSpacing: TRACK,
     textTransform: 'uppercase',
   },
+  /** Breathing + reflective log — classic full-outline buttons (pre–industrial luxury). */
   ghostBtn: {
     borderWidth: 1,
     borderColor: FG,
@@ -380,9 +379,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     backgroundColor: 'transparent',
     marginBottom: spacing.md,
-  },
-  ghostBtnCentered: {
-    alignItems: 'center',
   },
   ghostBtnRow: {
     flexDirection: 'row',
@@ -394,12 +390,8 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.mono,
     fontSize: 12,
     color: FG,
-    letterSpacing: TRACK,
+    letterSpacing: 2,
     flexShrink: 1,
-  },
-  ghostBtnTextCentered: {
-    textAlign: 'center',
-    width: '100%',
   },
   readyCluster: {
     flexDirection: 'row',
@@ -430,33 +422,5 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: GREY,
     textDecorationLine: 'underline',
-  },
-  breathModal: {
-    flex: 1,
-    backgroundColor: BG,
-    paddingHorizontal: spacing.lg,
-  },
-  breathCloseBtn: {
-    alignSelf: 'flex-start',
-    paddingVertical: 6,
-    marginBottom: spacing.sm,
-  },
-  breathTimerTop: {
-    fontFamily: fontFamilies.monoSemi,
-    fontSize: 26,
-    lineHeight: 32,
-    fontVariant: ['tabular-nums'],
-    color: 'rgba(255, 255, 255, 0.92)',
-    letterSpacing: 1,
-    textAlign: 'center',
-    width: '100%',
-    marginBottom: 80,
-    marginTop: spacing.lg,
-  },
-  breathCenter: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 200,
   },
 });

@@ -1,6 +1,29 @@
 import { StyleSheet, TextStyle, ViewStyle } from 'react-native';
 
-/** White surfaces, black primary actions, neutral grays for text. */
+/** High-end / monolith shell — OLED surface, hairline borders, white primary type. */
+export const monolith = {
+  primary: '#FFFFFF',
+  surface: '#0A0A0A',
+  border: '#1A1A1A',
+  muted: '#444444',
+  /** Industrial accent — active / monitored signal */
+  signalAmber: '#FFB800',
+  /** Signal button fill */
+  signalBg: '#050505',
+  /** Timeline / rail */
+  railDash: '#222222',
+} as const;
+
+/** Spec: 0 0 20px rgba(255,255,255,0.05) on active tiles (RN shadow props). */
+export const shadowTileActive: ViewStyle = {
+  shadowColor: '#FFFFFF',
+  shadowOffset: { width: 0, height: 0 },
+  shadowOpacity: 0.05,
+  shadowRadius: 20,
+  elevation: 0,
+};
+
+/** White surfaces, black primary actions, neutral grays for text (legacy / light surfaces). */
 export const colors = {
   paper: '#FFFFFF',
   paperWarm: '#FFFFFF',
@@ -37,24 +60,23 @@ export const colors = {
 } as const;
 
 /**
- * Main app shell — white field, neutral type and borders (home / stats / settings / tab bar).
+ * App shell — aligned with monolith palette (main app is dark).
  */
 export const shell = {
-  bg: '#FFFFFF',
-  surface: '#FAFAFA',
-  surfaceElevated: '#F0F0F0',
-  surfaceBorder: 'rgba(0, 0, 0, 0.08)',
-  /** Primary emphasis on light UI (headings, active tab, chart stroke) — not brand green. */
-  neon: '#1C1C1E',
-  neonMuted: 'rgba(28, 28, 30, 0.32)',
+  bg: monolith.surface,
+  surface: monolith.surface,
+  surfaceElevated: '#101010',
+  surfaceBorder: monolith.border,
+  neon: monolith.primary,
+  neonMuted: 'rgba(255,255,255,0.32)',
   neonGlow: 'transparent',
-  neonWash: 'rgba(0, 0, 0, 0.05)',
-  neonLine: 'rgba(0, 0, 0, 0.1)',
-  text: '#1C1C1E',
-  textMuted: '#636366',
-  textDim: '#8E8E93',
-  tabBar: '#FFFFFF',
-  tabInactive: '#AEAEB2',
+  neonWash: 'rgba(255,255,255,0.05)',
+  neonLine: monolith.border,
+  text: monolith.primary,
+  textMuted: monolith.muted,
+  textDim: 'rgba(255,255,255,0.45)',
+  tabBar: monolith.surface,
+  tabInactive: monolith.muted,
   overload: '#8E8E93',
 } as const;
 
@@ -69,14 +91,41 @@ export const spacing = {
 
 export const fontFamilies = {
   ui: 'Nunito_400Regular',
+  uiLight: 'Nunito_300Light',
   uiSemi: 'Nunito_600SemiBold',
   mono: 'RobotoMono_400Regular',
-  monoBold: 'RobotoMono_400Regular',
+  monoMedium: 'RobotoMono_500Medium',
+  monoBold: 'RobotoMono_700Bold',
   monoSemi: 'RobotoMono_600SemiBold',
 } as const;
 
+/** Typographic hierarchy: display / labels / body. */
+export const typeScale = {
+  display: {
+    fontFamily: fontFamilies.monoMedium,
+    fontSize: 48,
+    lineHeight: 52,
+    color: monolith.primary,
+    fontVariant: ['tabular-nums'],
+  } as TextStyle,
+  label: {
+    fontFamily: fontFamilies.monoBold,
+    fontSize: 9,
+    letterSpacing: 4,
+    color: monolith.muted,
+    textTransform: 'uppercase',
+  } as TextStyle,
+  body: {
+    fontFamily: fontFamilies.ui,
+    fontSize: 14,
+    lineHeight: 20,
+    color: 'rgba(255,255,255,0.82)',
+  } as TextStyle,
+};
+
 export const theme = {
   colors,
+  monolith,
   spacing,
   fontFamilies,
 };
@@ -92,39 +141,41 @@ export const layout = StyleSheet.create({
 
 export const textStyles = StyleSheet.create({
   hero: {
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 34,
-    color: colors.ink,
-    letterSpacing: -0.5,
+    fontFamily: fontFamilies.monoMedium,
+    fontSize: 48,
+    lineHeight: 52,
+    color: shell.text,
+    letterSpacing: -1,
   } as TextStyle,
   title: {
     fontFamily: fontFamilies.uiSemi,
     fontSize: 20,
-    color: colors.ink,
+    color: shell.text,
     letterSpacing: -0.2,
   } as TextStyle,
   body: {
     fontFamily: fontFamilies.ui,
-    fontSize: 16,
-    color: colors.inkMuted,
-    lineHeight: 24,
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.72)',
+    lineHeight: 20,
   } as TextStyle,
   label: {
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 13,
-    color: colors.ink,
-    letterSpacing: -0.1,
+    fontFamily: fontFamilies.monoBold,
+    fontSize: 9,
+    color: monolith.muted,
+    letterSpacing: 4,
+    textTransform: 'uppercase',
   } as TextStyle,
   caption: {
     fontFamily: fontFamilies.ui,
     fontSize: 13,
-    color: colors.inkFaint,
+    color: shell.textDim,
     lineHeight: 18,
   } as TextStyle,
   timer: {
     fontFamily: fontFamilies.mono,
     fontSize: 40,
-    color: colors.accent,
+    color: monolith.primary,
     fontVariant: ['tabular-nums'],
   } as TextStyle,
 });

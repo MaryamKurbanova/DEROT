@@ -4,5 +4,10 @@
 <dict>
 	<key>REACT_NATIVE_DEVICE_ACTIVITY_APP_GROUP</key>
 	<string>$(REACT_NATIVE_DEVICE_ACTIVITY_APP_GROUP)</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.deviceactivity.report-extension</string>
+	</dict>
 </dict>
 </plist>

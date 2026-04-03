@@ -1,11 +1,14 @@
 import {
+  Nunito_300Light,
   Nunito_400Regular,
   Nunito_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/nunito';
 import {
   RobotoMono_400Regular,
+  RobotoMono_500Medium,
   RobotoMono_600SemiBold,
+  RobotoMono_700Bold,
 } from '@expo-google-fonts/roboto-mono';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -18,16 +21,19 @@ import {
 } from './src/lib/onboardingStorage';
 import { MainShell } from './src/screens/MainShell';
 import { OnboardingFlow } from './src/screens/OnboardingFlow';
-import { shell } from './src/theme';
+import { monolith, shell } from './src/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function App() {
   const [fontsLoaded] = useFonts({
+    Nunito_300Light,
     Nunito_400Regular,
     Nunito_600SemiBold,
     RobotoMono_400Regular,
+    RobotoMono_500Medium,
     RobotoMono_600SemiBold,
+    RobotoMono_700Bold,
   });
   const [bootReady, setBootReady] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(true);
@@ -54,7 +60,7 @@ export default function App() {
   if (!fontsLoaded || !bootReady) {
     return (
       <View style={styles.boot}>
-        <ActivityIndicator color={shell.neon} size="large" />
+        <ActivityIndicator color={monolith.primary} size="large" />
       </View>
     );
   }
@@ -64,7 +70,7 @@ export default function App() {
       <View style={styles.root}>
         {showOnboarding ? (
           <>
-            <StatusBar style="dark" />
+            <StatusBar style="light" />
             <OnboardingFlow
               onDone={() => {
                 setShowOnboarding(false);

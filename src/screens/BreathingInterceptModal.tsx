@@ -1,13 +1,11 @@
 import * as Haptics from 'expo-haptics';
 import { useEffect, useRef, useState } from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BreathingPremiumShell } from '../components/BreathingPremiumShell';
 import { SomaticBreathing } from '../components/SomaticBreathing';
 import { fontFamilies, spacing } from '../theme';
 
-const BG = '#000000';
-const FG = '#FFFFFF';
-const GREY = '#888888';
+const GREY = 'rgba(255,255,255,0.38)';
 const TRACK = 2;
 
 const BREATH_SESSION_SECONDS = 30;
@@ -26,7 +24,6 @@ type Props = {
 };
 
 export function BreathingInterceptModal({ visible, onBreathingPhaseComplete }: Props) {
-  const insets = useSafeAreaInsets();
   const [sessionKey, setSessionKey] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(BREATH_SESSION_SECONDS);
   const completionStarted = useRef(false);
@@ -52,7 +49,7 @@ export function BreathingInterceptModal({ visible, onBreathingPhaseComplete }: P
     completionStarted.current = true;
     void (async () => {
       try {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
       } catch {
         /* still advance */
       } finally {
@@ -70,73 +67,58 @@ export function BreathingInterceptModal({ visible, onBreathingPhaseComplete }: P
         /* no pass without finishing — ignore hardware back where possible */
       }}
     >
-      <View style={[styles.root, { paddingTop: insets.top + spacing.sm, paddingBottom: insets.bottom + 12 }]}>
-        <Text style={styles.whisper}>Every few hours, breathe first.</Text>
-        <Text style={styles.title}>Stay with this for {BREATH_SESSION_SECONDS} seconds</Text>
-        <Text style={styles.sub}>
-          Next you’ll complete your reflective log — then your apps unlock for the usual window.
-        </Text>
-        <Text style={styles.timer} accessibilityRole="timer">
-          {formatBreathClock(secondsLeft)}
-        </Text>
-        <View style={styles.center}>
-          <SomaticBreathing key={sessionKey} variant="zen" outerDiameter={280} />
-        </View>
-        <View style={styles.hintWrap}>
-          <Text style={styles.hint}>Timer runs down automatically — then the log appears.</Text>
-        </View>
-      </View>
+      <BreathingPremiumShell
+        timerText={formatBreathClock(secondsLeft)}
+        bottomSlot={
+          <View style={styles.bottomCopy}>
+            <Text style={styles.whisper}>Every few hours, breathe first.</Text>
+            <Text style={styles.title}>Stay for {BREATH_SESSION_SECONDS} seconds</Text>
+            <Text style={styles.sub}>
+              Then your reflective log — and your usual app window.
+            </Text>
+            <Text style={styles.hint}>When the timer reaches 0:00, the log opens.</Text>
+          </View>
+        }
+      >
+        <SomaticBreathing key={sessionKey} variant="zen" outerDiameter={280} />
+      </BreathingPremiumShell>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: BG,
-    paddingHorizontal: spacing.lg,
+  bottomCopy: {
+    alignItems: 'center',
   },
   whisper: {
-    fontFamily: fontFamilies.mono,
+    fontFamily: fontFamilies.uiLight,
     fontSize: 10,
     color: GREY,
     letterSpacing: TRACK,
+    textTransform: 'uppercase',
     marginBottom: spacing.sm,
   },
   title: {
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 18,
-    color: FG,
-    letterSpacing: -0.2,
-    marginBottom: 8,
+    fontFamily: fontFamilies.uiLight,
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.72)',
+    letterSpacing: 0.2,
+    marginBottom: 6,
+    textAlign: 'center',
   },
   sub: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.72)',
-    lineHeight: 20,
-    marginBottom: spacing.md,
-  },
-  timer: {
-    fontFamily: fontFamilies.monoSemi,
-    fontSize: 28,
-    color: FG,
-    letterSpacing: 2,
+    fontFamily: fontFamilies.uiLight,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.42)',
+    lineHeight: 18,
+    marginBottom: spacing.sm,
     textAlign: 'center',
-    marginBottom: spacing.md,
-  },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  hintWrap: {
-    paddingVertical: spacing.md,
+    maxWidth: 300,
   },
   hint: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 12,
-    color: GREY,
+    fontFamily: fontFamilies.uiLight,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.32)',
     textAlign: 'center',
   },
 });

@@ -1,340 +1,279 @@
 import * as Haptics from 'expo-haptics';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  AppState,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  computeDangerZoneInsight,
-  formatDangerZoneSentence,
-  getAllLogsForAnalytics,
-  truncateReason,
-  type LogEntry,
-} from '../lib/reflectiveLog';
-import {
-  getReclaimedFocusSnapshot,
-  type ReclaimedFocusSnapshot,
-} from '../lib/reclaimedFocus';
-import { buildStickyCopy, type StickyCopy } from '../lib/stickyReclaimed';
-import {
-  formatReclaimedMathLine,
-  formatReclaimedWeeklyHeadline,
-  realLifeAnalogueForReclaimedMinutes,
-} from '../lib/reclaimedTimeDisplay';
-import { getInterceptArmed, setInterceptArmed } from '../lib/interceptArmed';
-import { fontFamilies, spacing } from '../theme';
-import { syncInterceptArmedToNative } from '../lib/interceptBridge';
-import { DerotDeviceActivityChart } from 'derot-device-activity-chart';
-import { DEROT_SELECTION_ID } from '../lib/derotIosScreenTime';
+import { GlitchJournalNav, GlitchSettingsNav } from '../components/GlitchLuxuryNav';
+import { VoidGlowPressable } from '../components/VoidGlowPressable';
+import { VoidOverlay } from '../components/VoidOverlay';
+import { findDistractionById } from '../lib/distractionApps';
+import { getAllLogsForAnalytics, type LogEntry, computeDangerZoneInsight, formatDangerZoneHUDLine } from '../lib/reflectiveLog';
+import { getReclaimedFocusSnapshot, type ReclaimedFocusSnapshot } from '../lib/reclaimedFocus';
+import { fontFamilies, monolith, spacing } from '../theme';
 
-const BG = '#000000';
-const FG = '#FFFFFF';
-const GREY = '#888888';
-const FEED_ROW = '#444444';
-const TRACK = 1;
+const GRID_GUTTER = 32;
+const SIGNAL_AMBER = '#FFB800';
+const CYAN_TRACK = '#00F0FF';
+
 type Props = {
   statsTick: number;
   onOpenSettings: () => void;
 };
 
+function voidTextGlow(pressed: boolean): TextStyle {
+  return {
+    textShadowColor: 'rgba(255, 255, 255, 0.65)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: pressed ? 16 : 0,
+  };
+}
+
 function pad2(n: number): string {
   return n.toString().padStart(2, '0');
 }
 
-function formatDateKey(ts: number): string {
+function formatTime24(ts: number): string {
   const d = new Date(ts);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-function formatTimeAmPm(ts: number): string {
-  const d = new Date(ts);
-  const hour24 = d.getHours();
-  let h12 = hour24 % 12;
-  if (h12 === 0) h12 = 12;
-  const ampm = hour24 < 12 ? 'AM' : 'PM';
-  return `${h12}:${pad2(d.getMinutes())} ${ampm}`;
-}
-
-function groupLogsByDate(entries: LogEntry[]): { dateKey: string; entries: LogEntry[] }[] {
-  const map = new Map<string, LogEntry[]>();
-  for (const e of entries) {
-    const key = formatDateKey(e.timestamp);
-    const list = map.get(key) ?? [];
-    list.push(e);
-    map.set(key, list);
+function journalAppLabel(e: LogEntry): string {
+  if (e.appId) {
+    const app = findDistractionById(e.appId);
+    if (app?.label) return app.label.toUpperCase().replace(/\s+/g, '_');
   }
-  const keys = [...map.keys()].sort((a, b) => b.localeCompare(a));
-  return keys.map((dateKey) => ({
-    dateKey,
-    entries: (map.get(dateKey) ?? []).sort((a, b) => b.timestamp - a.timestamp),
-  }));
+  return 'SESSION';
+}
+
+function startOfLocalDayMs(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function countInstagramAttemptsToday(entries: LogEntry[]): number {
+  const t0 = startOfLocalDayMs();
+  return entries.filter((e) => e.appId === 'instagram' && e.timestamp >= t0).length;
+}
+
+/** Display hours for HUD: fractional when needed. */
+function formatReclaimedHoursHud(minutes: number | null | undefined): string {
+  if (minutes == null || minutes < 0.5) return '0';
+  const h = minutes / 60;
+  if (h < 10 && h % 1 !== 0) return h.toFixed(1);
+  return String(Math.round(h * 10) / 10).replace(/\.0$/, '');
 }
 
 export function DashboardScreen({ statsTick, onOpenSettings }: Props) {
   const insets = useSafeAreaInsets();
   const [view, setView] = useState<'home' | 'journal'>('home');
-  const [armed, setArmed] = useState(true);
   const [analytics, setAnalytics] = useState<LogEntry[]>([]);
-  const [sticky, setSticky] = useState<StickyCopy | null>(null);
   const [reclaimedSnapshot, setReclaimedSnapshot] =
     useState<ReclaimedFocusSnapshot | null>(null);
+  const blurAnim = useRef(new Animated.Value(0)).current;
+  const dangerPulse = useRef(new Animated.Value(1)).current;
 
   const refresh = useCallback(async () => {
-    const [all, armedNow, focusSnap] = await Promise.all([
+    const [all, focusSnap] = await Promise.all([
       getAllLogsForAnalytics(),
-      getInterceptArmed(),
       getReclaimedFocusSnapshot(),
     ]);
     setAnalytics(all);
-    setArmed(armedNow);
     setReclaimedSnapshot(focusSnap);
-    setSticky(buildStickyCopy(focusSnap));
   }, []);
 
-  const journalByDate = useMemo(() => groupLogsByDate(analytics), [analytics]);
+  const journalSorted = useMemo(
+    () => [...analytics].sort((a, b) => b.timestamp - a.timestamp),
+    [analytics],
+  );
 
-  const dangerZoneLine = useMemo(() => {
+  const dangerHudLine = useMemo(() => {
     const insight = computeDangerZoneInsight(analytics);
-    return insight != null ? formatDangerZoneSentence(insight) : null;
+    return insight != null
+      ? formatDangerZoneHUDLine(insight)
+      : 'MOST LIKELY TO ROT: [INSUFFICIENT_DATA] // [--]';
   }, [analytics]);
+
+  const instagramOpens = useMemo(() => countInstagramAttemptsToday(analytics), [analytics]);
+
+  const addictionBaseline = useMemo(() => {
+    const daily = reclaimedSnapshot?.baselineDailyMinutes ?? 120;
+    return Math.max(10, Math.round(daily / 6));
+  }, [reclaimedSnapshot]);
+
+  const addictionProgress = useMemo(
+    () => Math.min(1, instagramOpens / Math.max(1, addictionBaseline)),
+    [instagramOpens, addictionBaseline],
+  );
+
+  const reclaimedHoursStr = useMemo(() => {
+    if (reclaimedSnapshot == null) return '—';
+    if (!reclaimedSnapshot.screenDataAuthoritative) return '—';
+    return formatReclaimedHoursHud(reclaimedSnapshot.weeklyReclaimedMinutes);
+  }, [reclaimedSnapshot]);
 
   useEffect(() => {
     void refresh();
   }, [refresh, statsTick]);
 
-  const toggleWallMaster = async () => {
-    void Haptics.selectionAsync();
-    const next = !armed;
-    setArmed(next);
-    await setInterceptArmed(next);
-    await syncInterceptArmedToNative(next);
-  };
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dangerPulse, { toValue: 0.82, duration: 1500, useNativeDriver: true }),
+        Animated.timing(dangerPulse, { toValue: 1, duration: 1500, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [dangerPulse]);
 
-  const bottomPad = Math.max(insets.bottom, 16) + spacing.md;
+  const runBlurTransition = useCallback(
+    (next: 'home' | 'journal', afterSwitch?: () => void) => {
+      Animated.timing(blurAnim, { toValue: 1, duration: 140, useNativeDriver: true }).start(
+        ({ finished }) => {
+          if (!finished) return;
+          if (next === 'journal') void refresh();
+          setView(next);
+          afterSwitch?.();
+          Animated.timing(blurAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+        },
+      );
+    },
+    [blurAnim, refresh],
+  );
 
   const openJournal = () => {
-    void Haptics.selectionAsync();
-    void refresh();
-    setView('journal');
+    runBlurTransition('journal');
   };
 
   const closeJournal = () => {
-    void Haptics.selectionAsync();
-    setView('home');
+    runBlurTransition('home');
   };
 
   return (
-    <View style={[styles.root, { paddingBottom: bottomPad }]}>
+    <View style={[styles.root, view === 'home' ? styles.rootHome : styles.rootJournal]}>
+      <VoidOverlay />
+
       {view === 'home' ? (
-        <>
+        <View style={styles.hudRoot} pointerEvents="box-none">
+          <Text
+            style={[styles.extRefLabel, { top: insets.top + 8, right: GRID_GUTTER + 34 }]}
+            pointerEvents="none"
+          >
+            EXT_REF // 0924-X
+          </Text>
+
           <View
             style={[
-              styles.topBar,
-              styles.topBarRow,
-              { paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.lg },
+              styles.topChrome,
+              { paddingTop: insets.top + spacing.sm, paddingHorizontal: GRID_GUTTER },
             ]}
+            pointerEvents="box-none"
           >
-            <Pressable
-              onPress={openJournal}
-              hitSlop={12}
-              style={({ pressed }) => [styles.navBtn, pressed && { opacity: 0.55 }]}
-            >
-              <Text style={styles.navBtnText}>JOURNAL</Text>
-            </Pressable>
-            <Pressable
+            <GlitchJournalNav onPress={openJournal} accessibilityLabel="Open journal" />
+            <GlitchSettingsNav
               onPress={() => {
-                void Haptics.selectionAsync();
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 onOpenSettings();
               }}
-              hitSlop={12}
-              style={({ pressed }) => [styles.navBtn, pressed && { opacity: 0.55 }]}
-            >
-              <Text style={styles.navBtnText}>SETTINGS</Text>
-            </Pressable>
+              accessibilityLabel="Open settings"
+            />
           </View>
 
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollInner}
-            keyboardShouldPersistTaps="handled"
+          <Animated.View
+            style={[styles.dangerCluster, { top: insets.top + 56, opacity: dangerPulse }]}
+            pointerEvents="none"
           >
-            <View style={styles.dangerZoneCard}>
-              <Text style={styles.dangerZoneLabel}>MOST LIKELY TO ROT</Text>
-              {dangerZoneLine != null ? (
-                <Text style={styles.dangerZoneBody}>{dangerZoneLine}</Text>
-              ) : (
-                <Text style={styles.dangerZoneHint}>
-                  Log a few reflections in your journal — we combine when you open the app with how
-                  you're feeling to surface your personal danger zone.
-                </Text>
-              )}
+            <View style={styles.dangerFrame}>
+              <View style={styles.cornerTL} />
+              <View style={styles.cornerBR} />
+              <Text style={styles.dangerText}>{dangerHudLine}</Text>
             </View>
+          </Animated.View>
 
-            {reclaimedSnapshot?.screenDataAuthoritative ? (
-              <View style={styles.deviceReportCard}>
-                <Text style={styles.deviceReportLabel}>SYSTEM USAGE CHART</Text>
-                <Text style={styles.deviceReportCaption}>
-                  Apple Device Activity report for your monitored selection (today, local time).
-                </Text>
-                <DerotDeviceActivityChart
-                  familyActivitySelectionId={DEROT_SELECTION_ID}
-                  style={styles.deviceReportNative}
-                />
-              </View>
-            ) : null}
-
-            {reclaimedSnapshot === null ? (
-              <View style={styles.reclaimedCard}>
-                <Text style={styles.reclaimedLabel}>RECLAIMED TIME</Text>
-                <Text style={styles.reclaimedSubtle}>Loading Screen Time metrics…</Text>
-              </View>
-            ) : !reclaimedSnapshot.screenDataAuthoritative ? (
-              <View style={styles.reclaimedCard}>
-                <Text style={styles.reclaimedLabel}>RECLAIMED TIME</Text>
-                <Text style={styles.reclaimedHeadline}>CONNECT IPHONE SCREEN TIME</Text>
-                <Text style={styles.reclaimedBody}>
-                  Reclaimed time compares the last 7 days of usage for your monitored apps (from
-                  Screen Time in your native build) to the daily average you entered in onboarding.
-                  Example: 4h/day baseline vs 2h/day actual → about 14 hours reclaimed this week.
-                </Text>
-                <Pressable
-                  onPress={() => {
-                    void Haptics.selectionAsync();
-                    onOpenSettings();
-                  }}
-                  style={({ pressed }) => [styles.reclaimedBtn, pressed && { opacity: 0.65 }]}
-                >
-                  <Text style={styles.reclaimedBtnText}>OPEN SETTINGS</Text>
-                </Pressable>
-              </View>
-            ) : reclaimedSnapshot.weeklyReclaimedMinutes != null &&
-              reclaimedSnapshot.weeklyReclaimedMinutes > 0 ? (
-              <View style={styles.reclaimedCard}>
-                <Text style={styles.reclaimedLabel}>RECLAIMED TIME</Text>
-                <Text style={styles.reclaimedShout}>
-                  {formatReclaimedWeeklyHeadline(reclaimedSnapshot.weeklyReclaimedMinutes)}
-                </Text>
-                <Text style={styles.reclaimedRealLife}>
-                  {realLifeAnalogueForReclaimedMinutes(reclaimedSnapshot.weeklyReclaimedMinutes)}
-                </Text>
-                <Text style={styles.reclaimedMath}>
-                  {formatReclaimedMathLine(reclaimedSnapshot)}
-                </Text>
-                {reclaimedSnapshot.isSystemOverload ? (
-                  <Text style={styles.reclaimedWarn}>
-                    Today’s Screen Time is above your daily baseline — your weekly reclaimed total
-                    still reflects the full 7-day window.
-                  </Text>
-                ) : null}
-                <Text style={styles.reclaimedSource}>
-                  Uses iPhone Screen Time totals for monitored apps (rolling 7 days) vs your
-                  onboarding baseline. Requires your native build with usage reporting enabled.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.reclaimedCard}>
-                <Text style={styles.reclaimedLabel}>RECLAIMED TIME</Text>
-                <Text style={styles.reclaimedHeadline}>
-                  {reclaimedSnapshot.isSystemOverload
-                    ? 'TODAY ABOVE BASELINE'
-                    : 'AT OR ABOVE YOUR WEEKLY BASELINE'}
-                </Text>
-                <Text style={styles.reclaimedBody}>
-                  {reclaimedSnapshot.isSystemOverload
-                    ? 'Screen Time today passed your daily onboarding average. Weekly reclaimed time is zero when monitored usage meets or exceeds your 7-day baseline.'
-                    : 'Monitored Screen Time this week matched or exceeded your baseline. Keep going — reclaimed hours show up when usage drops below what you said you used before.'}
-                </Text>
-                <Text style={styles.reclaimedMath}>{formatReclaimedMathLine(reclaimedSnapshot)}</Text>
-                <Text style={styles.reclaimedSource}>
-                  Formula: max(0, 7-day baseline minutes − 7-day monitored Screen Time minutes).
-                </Text>
-              </View>
-            )}
-
-            {sticky != null && sticky.label !== 'STICKY' ? (
-              <View style={styles.stickyCard}>
-                <Text style={styles.stickyLabel}>{sticky.label}</Text>
-                <Text style={styles.stickyHeadline}>{sticky.headline}</Text>
-                {sticky.compareLine ? (
-                  <Text style={styles.stickyCompare}>{sticky.compareLine}</Text>
-                ) : null}
-                <Text style={styles.stickyRealLife}>{sticky.realLife}</Text>
-              </View>
-            ) : null}
-          </ScrollView>
-
-          <Pressable
-            onPress={() => void toggleWallMaster()}
-            accessibilityRole="button"
-            accessibilityLabel={armed ? 'Lock active. Tap to pause.' : 'Lock paused. Tap to activate.'}
-            style={({ pressed }) => [styles.shieldBar, pressed && styles.shieldBarPressed]}
+          <View
+            style={[styles.coreCluster, { top: '50%', marginTop: -72 }]}
+            pointerEvents="none"
           >
-            <View style={styles.shieldRow}>
-              <View
-                style={[styles.shieldDotHalo, armed ? styles.shieldDotHaloActive : styles.shieldDotHaloStandby]}
-              >
-                <View style={[styles.shieldDot, armed ? styles.shieldDotActive : styles.shieldDotStandby]} />
-              </View>
-              <Text
-                style={[styles.shieldStatusText, armed ? styles.shieldStatusActive : styles.shieldStatusStandby]}
-              >
-                {armed ? 'LOCK: ACTIVE' : 'LOCK: PAUSED'}
-              </Text>
+            <Text style={styles.coreValue}>{reclaimedHoursStr}</Text>
+            <Text style={styles.coreSublabel}>RECLAIMED_EQUITY_HR</Text>
+          </View>
+
+          <View
+            style={[styles.trackerCluster, { bottom: insets.bottom + 28, paddingHorizontal: GRID_GUTTER }]}
+            pointerEvents="none"
+          >
+            <Text style={styles.trackerLabel}>[ TARGET_APP_ANALYSIS ]</Text>
+            <Text style={styles.trackerMain}>{`INSTAGRAM: ${instagramOpens} ATTEMPTS TODAY`}</Text>
+            <View style={styles.trackRail}>
+              <View style={[styles.trackFill, { width: `${addictionProgress * 100}%` }]} />
             </View>
-          </Pressable>
-        </>
+          </View>
+        </View>
       ) : (
         <>
           <View
             style={[
               styles.topBar,
               styles.topBarAlignStart,
-              { paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.lg },
+              { paddingTop: insets.top + spacing.sm, paddingHorizontal: GRID_GUTTER },
             ]}
           >
-            <Pressable
-              onPress={closeJournal}
-              hitSlop={12}
-              style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.55 }]}
-            >
-              <Text style={styles.backText}>← BACK</Text>
-            </Pressable>
+            <VoidGlowPressable onPress={closeJournal} accessibilityLabel="Back to home">
+              {({ pressed }) => (
+                <Text style={[styles.backText, voidTextGlow(pressed)]}>← BACK</Text>
+              )}
+            </VoidGlowPressable>
           </View>
 
           <ScrollView
             style={styles.scroll}
-            contentContainerStyle={styles.scrollInner}
+            contentContainerStyle={styles.journalScrollContent}
             keyboardShouldPersistTaps="handled"
           >
-            <Text style={styles.journalScreenTitle}>JOURNAL</Text>
-
-            <View style={styles.feed}>
-              {journalByDate.length === 0 ? (
-                <Text style={styles.feedEmpty}>NO_ENTRIES_YET</Text>
-              ) : (
-                journalByDate.map((group, gIdx) => (
-                  <View key={group.dateKey} style={styles.journalDay}>
-                    <Text
-                      style={[
-                        styles.journalDateHeading,
-                        gIdx === 0 && styles.journalDateHeadingFirst,
-                      ]}
-                    >
-                      {group.dateKey}
-                    </Text>
-                    {group.entries.map((e, i) => (
-                      <View key={`${e.timestamp}-${e.state}-${i}`} style={styles.feedRow}>
-                        <Text style={styles.feedLine} numberOfLines={3}>
-                          {formatTimeAmPm(e.timestamp)} | [{e.state}] |{' '}
-                          {truncateReason(e.intent, 48).toUpperCase()}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                ))
-              )}
-            </View>
+            <Text style={styles.journalTitle}>JOURNAL</Text>
+            {journalSorted.length === 0 ? (
+              <Text style={styles.feedEmpty}>NO_ENTRIES_YET</Text>
+            ) : (
+              journalSorted.map((e, i) => (
+                <Text
+                  key={`${e.timestamp}-${e.state}-${i}`}
+                  style={styles.journalGhostLine}
+                  selectable
+                >
+                  {`${formatTime24(e.timestamp)}  //  ${e.state.toUpperCase()}  //  ${journalAppLabel(e)}`}
+                </Text>
+              ))
+            )}
           </ScrollView>
         </>
       )}
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            zIndex: 80,
+            opacity: blurAnim,
+          },
+        ]}
+      >
+        {Platform.OS === 'ios' ? (
+          <BlurView intensity={55} tint="dark" style={StyleSheet.absoluteFill} />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.65)' }]} />
+        )}
+      </Animated.View>
     </View>
   );
 }
@@ -342,352 +281,187 @@ export function DashboardScreen({ statsTick, onOpenSettings }: Props) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: '#000000',
   },
-  topBar: {
-    paddingBottom: spacing.sm,
+  rootHome: {
+    backgroundColor: '#000000',
   },
-  topBarRow: {
+  rootJournal: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  hudRoot: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  topChrome: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  dangerCluster: {
+    position: 'absolute',
+    left: GRID_GUTTER,
+    right: GRID_GUTTER,
+    alignItems: 'center',
+    zIndex: 4,
+  },
+  dangerFrame: {
+    position: 'relative',
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    maxWidth: '100%',
+  },
+  cornerTL: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 16,
+    height: 16,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderColor: SIGNAL_AMBER,
+  },
+  cornerBR: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 16,
+    height: 16,
+    borderBottomWidth: 1,
+    borderRightWidth: 1,
+    borderColor: SIGNAL_AMBER,
+  },
+  dangerText: {
+    fontFamily: fontFamilies.mono,
+    fontSize: 10,
+    color: SIGNAL_AMBER,
+    textAlign: 'center',
+    letterSpacing: 0.6,
+    lineHeight: 15,
+  },
+  coreCluster: {
+    position: 'absolute',
+    left: GRID_GUTTER,
+    right: GRID_GUTTER,
+    alignItems: 'center',
+    zIndex: 5,
+  },
+  coreValue: {
+    fontFamily: fontFamilies.mono,
+    fontSize: 82,
+    lineHeight: 86,
+    color: '#FFFFFF',
+    fontWeight: '200',
+    letterSpacing: -5,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+    textShadowColor: 'rgba(255,255,255,0.45)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
+  },
+  coreSublabel: {
+    marginTop: 10,
+    fontFamily: fontFamilies.mono,
+    fontSize: 9,
+    letterSpacing: 5,
+    color: '#444444',
+    textTransform: 'uppercase',
+    textAlign: 'center',
+  },
+  trackerCluster: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 4,
+  },
+  trackerLabel: {
+    fontFamily: fontFamilies.mono,
+    fontSize: 8,
+    color: '#666666',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  trackerMain: {
+    fontFamily: fontFamilies.mono,
+    fontSize: 14,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  trackRail: {
     width: '100%',
+    maxWidth: 320,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    alignSelf: 'center',
+    overflow: 'hidden',
+  },
+  trackFill: {
+    height: '100%',
+    backgroundColor: CYAN_TRACK,
+  },
+  extRefLabel: {
+    position: 'absolute',
+    zIndex: 10,
+    fontFamily: fontFamilies.mono,
+    fontSize: 6,
+    letterSpacing: 1.2,
+    color: 'rgba(255,255,255,0.38)',
+    textTransform: 'uppercase',
+  },
+  topBar: {
+    paddingBottom: spacing.sm,
   },
   topBarAlignStart: {
     alignItems: 'flex-start',
     width: '100%',
   },
-  navBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  navBtnText: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    color: FG,
-    letterSpacing: TRACK,
-    opacity: 0.85,
-    textTransform: 'uppercase',
-  },
-  backBtn: {
-    paddingVertical: 6,
-    paddingRight: spacing.md,
-  },
   backText: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    color: FG,
-    letterSpacing: TRACK,
-    opacity: 0.85,
+    fontFamily: fontFamilies.monoBold,
+    fontSize: 9,
+    color: '#FFFFFF',
+    letterSpacing: 4,
+    opacity: 0.88,
     textTransform: 'uppercase',
   },
   scroll: {
     flex: 1,
   },
-  scrollInner: {
-    paddingHorizontal: spacing.lg,
+  journalScrollContent: {
+    paddingHorizontal: GRID_GUTTER,
     paddingBottom: spacing.md,
   },
-  dangerZoneCard: {
-    borderWidth: 2,
-    borderColor: FG,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  dangerZoneLabel: {
+  journalTitle: {
     fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: GREY,
-    letterSpacing: TRACK,
+    fontSize: 7,
+    color: '#444444',
+    letterSpacing: 4,
     textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-  },
-  dangerZoneBody: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 16,
-    lineHeight: 24,
-    color: FG,
-    letterSpacing: -0.2,
-  },
-  dangerZoneHint: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    lineHeight: 16,
-    color: GREY,
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-    opacity: 0.9,
-  },
-  deviceReportCard: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    minHeight: 280,
-  },
-  deviceReportLabel: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: GREY,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  deviceReportCaption: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.65)',
-    lineHeight: 17,
-    marginBottom: spacing.sm,
-  },
-  deviceReportNative: {
-    width: '100%',
-    minHeight: 220,
-    flexGrow: 1,
-  },
-  reclaimedCard: {
-    borderWidth: 2,
-    borderColor: FG,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  reclaimedLabel: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: GREY,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-  },
-  reclaimedShout: {
-    fontFamily: fontFamilies.monoSemi,
-    fontSize: 15,
-    lineHeight: 22,
-    color: FG,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-  },
-  reclaimedHeadline: {
-    fontFamily: fontFamilies.monoSemi,
-    fontSize: 14,
-    lineHeight: 20,
-    color: FG,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-  },
-  reclaimedBody: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 14,
-    lineHeight: 21,
-    color: 'rgba(255,255,255,0.85)',
-    marginBottom: spacing.sm,
-  },
-  reclaimedRealLife: {
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 16,
-    lineHeight: 24,
-    color: 'rgba(255,255,255,0.92)',
-    marginBottom: spacing.md,
-    letterSpacing: -0.2,
-  },
-  reclaimedMath: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: GREY,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-    lineHeight: 15,
-    marginBottom: spacing.sm,
-  },
-  reclaimedWarn: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#FFB020',
-    marginBottom: spacing.sm,
-  },
-  reclaimedSource: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 8,
-    color: GREY,
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-    lineHeight: 14,
-    opacity: 0.85,
-  },
-  reclaimedSubtle: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    color: GREY,
-    letterSpacing: TRACK,
-  },
-  reclaimedBtn: {
-    marginTop: spacing.sm,
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
-    paddingVertical: 10,
-    paddingHorizontal: spacing.sm,
-  },
-  reclaimedBtnText: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: FG,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
-  },
-  stickyCard: {
-    borderWidth: 1,
-    borderColor: FG,
-    padding: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  stickyLabel: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: GREY,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-  },
-  stickyHeadline: {
-    fontFamily: fontFamilies.monoSemi,
-    fontSize: 13,
-    lineHeight: 19,
-    color: FG,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-  },
-  stickyCompare: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    color: GREY,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-  },
-  stickyRealLife: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 15,
-    lineHeight: 22,
-    color: 'rgba(255,255,255,0.82)',
-    letterSpacing: -0.1,
-  },
-  journalScreenTitle: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 11,
-    color: GREY,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
-    marginBottom: spacing.md,
-  },
-  feed: {
-    gap: 0,
-  },
-  journalDay: {
-    marginBottom: spacing.md,
-  },
-  journalDateHeading: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    color: GREY,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  journalDateHeadingFirst: {
-    marginTop: 0,
+    marginTop: 28,
+    marginBottom: 12,
   },
   feedEmpty: {
     fontFamily: fontFamilies.mono,
     fontSize: 10,
-    color: GREY,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
+    color: monolith.muted,
+    letterSpacing: 2,
   },
-  feedRow: {
-    backgroundColor: FEED_ROW,
-    borderWidth: 1,
-    borderColor: FEED_ROW,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    marginBottom: -1,
-  },
-  feedLine: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    lineHeight: 15,
-    color: FG,
-    letterSpacing: TRACK,
-    textTransform: 'uppercase',
-  },
-  shieldBar: {
-    marginHorizontal: spacing.lg,
-    paddingVertical: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shieldBarPressed: {
-    opacity: 0.72,
-  },
-  shieldRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shieldDotHalo: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  shieldDotHaloActive: {
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  shieldDotHaloStandby: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  shieldDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
-  },
-  shieldDotActive: {
-    backgroundColor: FG,
-    ...(Platform.OS === 'ios'
-      ? {
-          shadowColor: '#FFFFFF',
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 0.85,
-          shadowRadius: 10,
-        }
-      : {}),
-  },
-  shieldDotStandby: {
-    backgroundColor: 'rgba(136,136,136,0.85)',
-  },
-  shieldStatusText: {
+  journalGhostLine: {
     fontFamily: fontFamilies.mono,
     fontSize: 11,
-    letterSpacing: TRACK + 0.5,
-    textTransform: 'uppercase',
-  },
-  shieldStatusActive: {
-    color: FG,
-    textShadowColor: 'rgba(255,255,255,0.55)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 8,
-  },
-  shieldStatusStandby: {
-    color: 'rgba(136,136,136,0.95)',
+    color: 'rgba(255,255,255,0.62)',
+    letterSpacing: 0.5,
+    marginBottom: 14,
+    lineHeight: 16,
   },
 });
