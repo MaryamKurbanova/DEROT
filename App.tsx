@@ -1,9 +1,18 @@
 import {
+  Inter_300Light,
+  Inter_400Regular,
+  Inter_700Bold,
+} from '@expo-google-fonts/inter';
+import {
   Nunito_300Light,
   Nunito_400Regular,
   Nunito_600SemiBold,
   useFonts,
 } from '@expo-google-fonts/nunito';
+import {
+  PlayfairDisplay_400Regular,
+  PlayfairDisplay_400Regular_Italic,
+} from '@expo-google-fonts/playfair-display';
 import {
   RobotoMono_400Regular,
   RobotoMono_500Medium,
@@ -15,18 +24,20 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import {
-  getOnboardingComplete,
-  resetOnboardingForDev,
-} from './src/lib/onboardingStorage';
+import { getOnboardingComplete } from './src/lib/onboardingStorage';
 import { MainShell } from './src/screens/MainShell';
 import { OnboardingFlow } from './src/screens/OnboardingFlow';
-import { monolith, shell } from './src/theme';
+import { unrot } from './src/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function App() {
   const [fontsLoaded] = useFonts({
+    PlayfairDisplay_400Regular,
+    PlayfairDisplay_400Regular_Italic,
+    Inter_300Light,
+    Inter_400Regular,
+    Inter_700Bold,
     Nunito_300Light,
     Nunito_400Regular,
     Nunito_600SemiBold,
@@ -60,7 +71,7 @@ export default function App() {
   if (!fontsLoaded || !bootReady) {
     return (
       <View style={styles.boot}>
-        <ActivityIndicator color={monolith.primary} size="large" />
+        <ActivityIndicator color={unrot.ink} size="large" />
       </View>
     );
   }
@@ -78,12 +89,7 @@ export default function App() {
             />
           </>
         ) : (
-          <MainShell
-            onReplayOnboarding={async () => {
-              await resetOnboardingForDev();
-              setShowOnboarding(true);
-            }}
-          />
+          <MainShell />
         )}
       </View>
     </SafeAreaProvider>
@@ -91,10 +97,10 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: shell.bg },
+  root: { flex: 1, backgroundColor: unrot.bg },
   boot: {
     flex: 1,
-    backgroundColor: shell.bg,
+    backgroundColor: unrot.bg,
     alignItems: 'center',
     justifyContent: 'center',
   },

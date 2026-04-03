@@ -54,15 +54,28 @@ export async function appendReflectiveLog(input: {
 
 /** Focus wall / reflective log — same storage as `appendReflectiveLog`. */
 export async function logReflection(input: {
-  mood: string;
-  intent: string;
+  mood?: string;
+  intent?: string;
+  /** Freeform intercept answer (monolith log). */
+  reflection?: string;
   appId?: string;
 }): Promise<void> {
-  await appendReflectiveLog({
-    state: input.mood,
-    intent: input.intent,
-    ...(input.appId ? { appId: input.appId } : {}),
-  });
+  const trimmed = input.reflection?.trim();
+  if (trimmed) {
+    await appendReflectiveLog({
+      state: 'REFLECTION',
+      intent: trimmed,
+      ...(input.appId ? { appId: input.appId } : {}),
+    });
+    return;
+  }
+  if (input.mood && input.intent) {
+    await appendReflectiveLog({
+      state: input.mood,
+      intent: input.intent,
+      ...(input.appId ? { appId: input.appId } : {}),
+    });
+  }
 }
 
 async function loadAll(): Promise<LogEntry[]> {
@@ -142,6 +155,25 @@ export function formatHourRangeAmPm(startHour24: number): string {
   return `${piece(startHour24)} – ${piece(startHour24 + 1)}`;
 }
 
+/**
+ * Danger-zone copy: hour + lowercase am/pm on both sides, no minutes.
+ * e.g. 14 → "2pm - 3pm"
+ */
+export function formatDangerZoneEditorialRange(startHour24: number): string {
+  const norm = (h: number) => ((h % 24) + 24) % 24;
+  const start = norm(startHour24);
+  const end = norm(startHour24 + 1);
+  const mer = (h: number) => (h < 12 ? 'am' : 'pm');
+  const to12 = (h: number) => {
+    let x = h % 12;
+    if (x === 0) x = 12;
+    return x;
+  };
+  const startStr = `${to12(start)}${mer(start)}`;
+  const endStr = `${to12(end)}${mer(end)}`;
+  return `${startStr} - ${endStr}`;
+}
+
 export type DangerZoneInsight = {
   startHour: number;
   state: string;
@@ -192,6 +224,39 @@ export function formatDangerZoneSentence(insight: DangerZoneInsight): string {
   const feeling =
     raw.length > 0 ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : raw;
   return `You are most likely to rot at ${time} when feeling ${feeling}.`;
+}
+
+/** e.g. "You are more likely to rot between 2pm and 3pm." */
+export function formatEditorialLuxuryDangerLine(insight: DangerZoneInsight | null): string {
+  if (insight == null) {
+    return 'You are more likely to rot between reflective moments—keep logging to reveal your pattern.';
+  }
+  const range = formatDangerZoneEditorialRange(insight.startHour);
+  return `You are more likely to rot between ${range}.`;
+}
+
+/**
+ * Same editorial time window as `formatEditorialLuxuryDangerLine`, plus
+ * “when feeling …” from the insight mood when present.
+ */
+export function formatEditorialLuxuryDangerLineWithFeeling(insight: DangerZoneInsight | null): string {
+  const base = formatEditorialLuxuryDangerLine(insight);
+  if (insight == null) return base;
+  const raw = truncateReason(insight.state.trim(), 40);
+  if (!raw) return base;
+  const feeling =
+    raw.length > 0 ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : raw;
+  const trimmed = base.replace(/\.\s*$/, '');
+  return `${trimmed} when feeling ${feeling}.`;
+}
+
+/** `VULNERABILITY: 20:00 — 21:00` (24h, em dash). */
+export function formatVulnerabilityWindow24(insight: DangerZoneInsight | null): string {
+  if (insight == null) return 'VULNERABILITY: --:-- — --:--';
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const h = ((insight.startHour % 24) + 24) % 24;
+  const next = (h + 1) % 24;
+  return `VULNERABILITY: ${pad(h)}:00 — ${pad(next)}:00`;
 }
 
 /** HUD line: `MOST LIKELY TO ROT: [8:00 PM - 9:00 PM] // [ANXIOUS]` */

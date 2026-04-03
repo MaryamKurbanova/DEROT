@@ -99,6 +99,32 @@ export const fontFamilies = {
   monoSemi: 'RobotoMono_600SemiBold',
 } as const;
 
+/** Editorial light shell — pure white, no chrome. */
+export const unrot = {
+  bg: '#FFFFFF',
+  ink: '#1A1A1A',
+  muted: '#888888',
+  /** Unselected log choices, dividers */
+  choiceMuted: '#DDDDDD',
+  /** Bottom narrative / hints */
+  narrativeMuted: '#BBBBBB',
+  timeline: '#DDDDDD',
+  gutter: 40,
+} as const;
+
+export const EDITORIAL_FADE_MS = 800;
+
+/** Must match `useFonts` keys in App.tsx. */
+export const unrotFonts = {
+  heroSerif: 'PlayfairDisplay_400Regular',
+  heroSerifItalic: 'PlayfairDisplay_400Regular_Italic',
+  interLight: 'Inter_300Light',
+  interRegular: 'Inter_400Regular',
+  interBold: 'Inter_700Bold',
+  mono: 'RobotoMono_400Regular',
+  monoBold: 'RobotoMono_700Bold',
+} as const;
+
 /** Typographic hierarchy: display / labels / body. */
 export const typeScale = {
   display: {

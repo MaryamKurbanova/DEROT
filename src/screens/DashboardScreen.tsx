@@ -1,94 +1,146 @@
 import * as Haptics from 'expo-haptics';
-import { BlurView } from 'expo-blur';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  AppState,
-  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  type TextStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GlitchJournalNav, GlitchSettingsNav } from '../components/GlitchLuxuryNav';
-import { VoidGlowPressable } from '../components/VoidGlowPressable';
-import { VoidOverlay } from '../components/VoidOverlay';
-import { findDistractionById } from '../lib/distractionApps';
-import { getAllLogsForAnalytics, type LogEntry, computeDangerZoneInsight, formatDangerZoneHUDLine } from '../lib/reflectiveLog';
+import {
+  computeDangerZoneInsight,
+  formatEditorialLuxuryDangerLineWithFeeling,
+  getAllLogsForAnalytics,
+  type LogEntry,
+} from '../lib/reflectiveLog';
 import { getReclaimedFocusSnapshot, type ReclaimedFocusSnapshot } from '../lib/reclaimedFocus';
-import { fontFamilies, monolith, spacing } from '../theme';
+import { getReclaimedMomentsToday } from '../lib/reclaimedMoments';
+import { EDITORIAL_FADE_MS, unrot, unrotFonts } from '../theme';
 
-const GRID_GUTTER = 32;
-const SIGNAL_AMBER = '#FFB800';
-const CYAN_TRACK = '#00F0FF';
+const G = unrot.gutter;
 
 type Props = {
   statsTick: number;
   onOpenSettings: () => void;
+  onStartReflectiveLog: () => void;
 };
 
-function voidTextGlow(pressed: boolean): TextStyle {
-  return {
-    textShadowColor: 'rgba(255, 255, 255, 0.65)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: pressed ? 16 : 0,
-  };
-}
-
-function pad2(n: number): string {
-  return n.toString().padStart(2, '0');
-}
-
-function formatTime24(ts: number): string {
+function dayKey(ts: number): string {
   const d = new Date(ts);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
-function journalAppLabel(e: LogEntry): string {
-  if (e.appId) {
-    const app = findDistractionById(e.appId);
-    if (app?.label) return app.label.toUpperCase().replace(/\s+/g, '_');
+function formatJournalTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function formatJournalDayHeading(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function titleCaseWord(s: string): string {
+  const t = s.trim();
+  if (!t) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
+}
+
+function moodLabelDisplay(raw: string): string {
+  return raw
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => titleCaseWord(w))
+    .join(' ');
+}
+
+function splitIntentLines(intent: string): { headline: string; detail?: string } {
+  const t = intent.trim();
+  const sep = ' — ';
+  const i = t.indexOf(sep);
+  if (i === -1) return { headline: t };
+  const headline = t.slice(0, i).trim();
+  const detail = t.slice(i + sep.length).trim();
+  return { headline: headline || t, detail: detail || undefined };
+}
+
+function moodPillPalette(stateRaw: string): { bg: string; fg: string; label: string } {
+  const raw = stateRaw.trim();
+  if (raw.toUpperCase() === 'REFLECTION') {
+    return { bg: '#ECEAE8', fg: '#5A5856', label: 'Reflection' };
   }
-  return 'SESSION';
+  const k = raw.toLowerCase();
+  const map: Record<string, { bg: string; fg: string }> = {
+    calm: { bg: '#E3EDF7', fg: '#2F4A5E' },
+    anxious: { bg: '#F5E1E8', fg: '#5C3845' },
+    tired: { bg: '#E9E6F2', fg: '#454066' },
+    lost: { bg: '#EFEAE3', fg: '#4A453C' },
+    bored: { bg: '#E6EDE8', fg: '#3D5344' },
+  };
+  const c = map[k] ?? { bg: '#F0F0F0', fg: '#666666' };
+  return { ...c, label: moodLabelDisplay(raw) };
 }
 
-function startOfLocalDayMs(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+function JournalEntryRow({ entry }: { entry: LogEntry }) {
+  const { headline, detail } = splitIntentLines(entry.intent);
+  const pill = moodPillPalette(entry.state);
+
+  return (
+    <View style={styles.journalEntry}>
+      <View style={styles.journalEntryRow}>
+        <Text style={styles.journalTime}>{formatJournalTime(entry.timestamp)}</Text>
+        <View style={styles.journalEntryRight}>
+          <Text style={styles.journalIntent}>{headline}</Text>
+          {detail ? (
+            <Text style={styles.journalIntentDetail} selectable>
+              {detail}
+            </Text>
+          ) : null}
+          <View style={[styles.moodPill, { backgroundColor: pill.bg }]}>
+            <Text style={[styles.moodPillText, { color: pill.fg }]}>{pill.label}</Text>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
 }
 
-function countInstagramAttemptsToday(entries: LogEntry[]): number {
-  const t0 = startOfLocalDayMs();
-  return entries.filter((e) => e.appId === 'instagram' && e.timestamp >= t0).length;
-}
-
-/** Display hours for HUD: fractional when needed. */
-function formatReclaimedHoursHud(minutes: number | null | undefined): string {
-  if (minutes == null || minutes < 0.5) return '0';
-  const h = minutes / 60;
-  if (h < 10 && h % 1 !== 0) return h.toFixed(1);
-  return String(Math.round(h * 10) / 10).replace(/\.0$/, '');
-}
-
-export function DashboardScreen({ statsTick, onOpenSettings }: Props) {
+export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLog }: Props) {
   const insets = useSafeAreaInsets();
   const [view, setView] = useState<'home' | 'journal'>('home');
   const [analytics, setAnalytics] = useState<LogEntry[]>([]);
   const [reclaimedSnapshot, setReclaimedSnapshot] =
     useState<ReclaimedFocusSnapshot | null>(null);
-  const blurAnim = useRef(new Animated.Value(0)).current;
-  const dangerPulse = useRef(new Animated.Value(1)).current;
+  const [momentsCount, setMomentsCount] = useState(0);
+
+  const fadeOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    fadeOpacity.setValue(0);
+    Animated.timing(fadeOpacity, {
+      toValue: 1,
+      duration: EDITORIAL_FADE_MS,
+      useNativeDriver: true,
+    }).start();
+  }, [view, statsTick, fadeOpacity]);
 
   const refresh = useCallback(async () => {
-    const [all, focusSnap] = await Promise.all([
+    const [all, focusSnap, moments] = await Promise.all([
       getAllLogsForAnalytics(),
       getReclaimedFocusSnapshot(),
+      getReclaimedMomentsToday(),
     ]);
     setAnalytics(all);
     setReclaimedSnapshot(focusSnap);
+    setMomentsCount(moments);
   }, []);
 
   const journalSorted = useMemo(
@@ -96,184 +148,189 @@ export function DashboardScreen({ statsTick, onOpenSettings }: Props) {
     [analytics],
   );
 
-  const dangerHudLine = useMemo(() => {
-    const insight = computeDangerZoneInsight(analytics);
-    return insight != null
-      ? formatDangerZoneHUDLine(insight)
-      : 'MOST LIKELY TO ROT: [INSUFFICIENT_DATA] // [--]';
-  }, [analytics]);
+  const dangerInsight = useMemo(() => computeDangerZoneInsight(analytics), [analytics]);
 
-  const instagramOpens = useMemo(() => countInstagramAttemptsToday(analytics), [analytics]);
-
-  const addictionBaseline = useMemo(() => {
-    const daily = reclaimedSnapshot?.baselineDailyMinutes ?? 120;
-    return Math.max(10, Math.round(daily / 6));
-  }, [reclaimedSnapshot]);
-
-  const addictionProgress = useMemo(
-    () => Math.min(1, instagramOpens / Math.max(1, addictionBaseline)),
-    [instagramOpens, addictionBaseline],
+  const dangerZoneLine = useMemo(
+    () => formatEditorialLuxuryDangerLineWithFeeling(dangerInsight),
+    [dangerInsight],
   );
 
-  const reclaimedHoursStr = useMemo(() => {
-    if (reclaimedSnapshot == null) return '—';
-    if (!reclaimedSnapshot.screenDataAuthoritative) return '—';
-    return formatReclaimedHoursHud(reclaimedSnapshot.weeklyReclaimedMinutes);
+  const screenHrsDisplay = useMemo(() => {
+    if (reclaimedSnapshot == null || !reclaimedSnapshot.screenDataAuthoritative) return '0';
+    const h = reclaimedSnapshot.currentDailyUsageMinutes / 60;
+    if (h < 0.05) return '0';
+    return h < 10 && h % 1 !== 0 ? h.toFixed(1) : String(Math.round(h * 10) / 10).replace(/\.0$/, '');
+  }, [reclaimedSnapshot]);
+
+  const reclaimedHrsDisplay = useMemo(() => {
+    if (reclaimedSnapshot == null || !reclaimedSnapshot.screenDataAuthoritative) return '0';
+    const m = reclaimedSnapshot.weeklyReclaimedMinutes;
+    if (m == null || m < 0.5) return '0';
+    const h = m / 60;
+    return h < 10 && h % 1 !== 0 ? h.toFixed(1) : String(Math.round(h * 10) / 10).replace(/\.0$/, '');
   }, [reclaimedSnapshot]);
 
   useEffect(() => {
     void refresh();
   }, [refresh, statsTick]);
 
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(dangerPulse, { toValue: 0.82, duration: 1500, useNativeDriver: true }),
-        Animated.timing(dangerPulse, { toValue: 1, duration: 1500, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [dangerPulse]);
-
-  const runBlurTransition = useCallback(
-    (next: 'home' | 'journal', afterSwitch?: () => void) => {
-      Animated.timing(blurAnim, { toValue: 1, duration: 140, useNativeDriver: true }).start(
-        ({ finished }) => {
-          if (!finished) return;
-          if (next === 'journal') void refresh();
-          setView(next);
-          afterSwitch?.();
-          Animated.timing(blurAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start();
-        },
-      );
-    },
-    [blurAnim, refresh],
-  );
-
   const openJournal = () => {
-    runBlurTransition('journal');
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView('journal');
+    void refresh();
   };
 
   const closeJournal = () => {
-    runBlurTransition('home');
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setView('home');
   };
 
-  return (
-    <View style={[styles.root, view === 'home' ? styles.rootHome : styles.rootJournal]}>
-      <VoidOverlay />
+  const homeDateLine = useMemo(
+    () =>
+      new Date().toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'short',
+        day: 'numeric',
+      }),
+    [statsTick],
+  );
 
-      {view === 'home' ? (
-        <View style={styles.hudRoot} pointerEvents="box-none">
+  let lastDay = '';
+  const journalBlocks = journalSorted.map((e, i) => {
+    const dk = dayKey(e.timestamp);
+    const isFirstOfDay = dk !== lastDay;
+    if (isFirstOfDay) lastDay = dk;
+    const key = `${e.timestamp}-${e.state}-${i}`;
+    return (
+      <Fragment key={key}>
+        {isFirstOfDay ? (
           <Text
-            style={[styles.extRefLabel, { top: insets.top + 8, right: GRID_GUTTER + 34 }]}
-            pointerEvents="none"
+            style={[styles.journalDayHeading, i > 0 && styles.journalDayHeadingSpaced]}
+            accessibilityRole="header"
           >
-            EXT_REF // 0924-X
+            {formatJournalDayHeading(e.timestamp)}
           </Text>
+        ) : null}
+        <JournalEntryRow entry={e} />
+      </Fragment>
+    );
+  });
 
-          <View
-            style={[
-              styles.topChrome,
-              { paddingTop: insets.top + spacing.sm, paddingHorizontal: GRID_GUTTER },
-            ]}
-            pointerEvents="box-none"
-          >
-            <GlitchJournalNav onPress={openJournal} accessibilityLabel="Open journal" />
-            <GlitchSettingsNav
-              onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                onOpenSettings();
-              }}
-              accessibilityLabel="Open settings"
-            />
-          </View>
-
-          <Animated.View
-            style={[styles.dangerCluster, { top: insets.top + 56, opacity: dangerPulse }]}
-            pointerEvents="none"
-          >
-            <View style={styles.dangerFrame}>
-              <View style={styles.cornerTL} />
-              <View style={styles.cornerBR} />
-              <Text style={styles.dangerText}>{dangerHudLine}</Text>
-            </View>
-          </Animated.View>
-
-          <View
-            style={[styles.coreCluster, { top: '50%', marginTop: -72 }]}
-            pointerEvents="none"
-          >
-            <Text style={styles.coreValue}>{reclaimedHoursStr}</Text>
-            <Text style={styles.coreSublabel}>RECLAIMED_EQUITY_HR</Text>
-          </View>
-
-          <View
-            style={[styles.trackerCluster, { bottom: insets.bottom + 28, paddingHorizontal: GRID_GUTTER }]}
-            pointerEvents="none"
-          >
-            <Text style={styles.trackerLabel}>[ TARGET_APP_ANALYSIS ]</Text>
-            <Text style={styles.trackerMain}>{`INSTAGRAM: ${instagramOpens} ATTEMPTS TODAY`}</Text>
-            <View style={styles.trackRail}>
-              <View style={[styles.trackFill, { width: `${addictionProgress * 100}%` }]} />
-            </View>
-          </View>
-        </View>
-      ) : (
-        <>
-          <View
-            style={[
-              styles.topBar,
-              styles.topBarAlignStart,
-              { paddingTop: insets.top + spacing.sm, paddingHorizontal: GRID_GUTTER },
-            ]}
-          >
-            <VoidGlowPressable onPress={closeJournal} accessibilityLabel="Back to home">
-              {({ pressed }) => (
-                <Text style={[styles.backText, voidTextGlow(pressed)]}>← BACK</Text>
-              )}
-            </VoidGlowPressable>
-          </View>
-
+  return (
+    <View style={styles.root}>
+      {view === 'home' ? (
+        <Animated.View style={[styles.fill, { opacity: fadeOpacity }]}>
           <ScrollView
             style={styles.scroll}
-            contentContainerStyle={styles.journalScrollContent}
+            contentContainerStyle={[
+              styles.homeContent,
+              {
+                paddingTop: insets.top + 16,
+                paddingBottom: Math.max(insets.bottom, G) + 56,
+                paddingHorizontal: G,
+              },
+            ]}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.journalTitle}>JOURNAL</Text>
-            {journalSorted.length === 0 ? (
-              <Text style={styles.feedEmpty}>NO_ENTRIES_YET</Text>
-            ) : (
-              journalSorted.map((e, i) => (
-                <Text
-                  key={`${e.timestamp}-${e.state}-${i}`}
-                  style={styles.journalGhostLine}
-                  selectable
-                >
-                  {`${formatTime24(e.timestamp)}  //  ${e.state.toUpperCase()}  //  ${journalAppLabel(e)}`}
+            <View style={styles.topNav}>
+              <Pressable onPress={openJournal} hitSlop={14} style={styles.navHit}>
+                <Text style={styles.navSerif}>Journal</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onOpenSettings();
+                }}
+                hitSlop={14}
+                style={styles.navHit}
+              >
+                <Text style={styles.navSerif}>Settings</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.homeDate}>{homeDateLine}</Text>
+            <Text style={styles.homeTagline}>Reclaimed hours.</Text>
+
+            <View style={styles.heroSection}>
+              <Text style={styles.monoLabel}>HOURS_RECLAIMED</Text>
+              <Text
+                style={styles.heroNumber}
+                adjustsFontSizeToFit
+                minimumFontScale={0.38}
+                numberOfLines={1}
+              >
+                {reclaimedHrsDisplay}
+              </Text>
+            </View>
+
+            <View style={styles.metricsBand}>
+              <View style={styles.metricCol}>
+                <Text style={styles.monoLabelMuted}>SCREEN TIME</Text>
+                <Text style={styles.metricStat}>
+                  {screenHrsDisplay}
+                  <Text style={styles.metricStatUnit}> hrs</Text>
                 </Text>
-              ))
+                <Text style={styles.metricCaption}>Today</Text>
+              </View>
+              <View style={styles.metricGutter} />
+              <View style={styles.metricCol}>
+                <Text style={styles.monoLabelMuted}>MOMENTS</Text>
+                <Text style={styles.metricStat}>{String(momentsCount)}</Text>
+                <Text style={styles.metricCaption}>Reclaimed today</Text>
+              </View>
+            </View>
+
+            <View style={styles.insightSection}>
+              <Text style={styles.insightSerifTitle}>Danger zone</Text>
+              <Text style={styles.dangerZoneBody}>{dangerZoneLine}</Text>
+            </View>
+
+            <View style={styles.flexSpacer} />
+
+            <View style={styles.homeFooter}>
+              <Pressable
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  onStartReflectiveLog();
+                }}
+                style={({ pressed }) => [styles.logHit, pressed && { opacity: 0.45 }]}
+                hitSlop={14}
+              >
+                <Text style={styles.logText}>LOG</Text>
+                <Text style={styles.logHint}>Name how you feel before you scroll.</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </Animated.View>
+      ) : (
+        <Animated.View style={[styles.fill, { opacity: fadeOpacity }]}>
+          <View style={[styles.journalTop, { paddingTop: insets.top + 12, paddingHorizontal: G }]}>
+            <Pressable onPress={closeJournal} hitSlop={12} style={styles.navHit}>
+              <Text style={styles.journalBackSerif}>back</Text>
+            </Pressable>
+          </View>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={[
+              styles.journalScroll,
+              {
+                paddingHorizontal: G,
+                paddingBottom: Math.max(insets.bottom, G) + 24,
+              },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.journalScreenTitle}>Journal</Text>
+            {journalSorted.length === 0 ? (
+              <Text style={styles.journalEmpty}>Nothing logged yet.</Text>
+            ) : (
+              journalBlocks
             )}
           </ScrollView>
-        </>
+        </Animated.View>
       )}
-
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            zIndex: 80,
-            opacity: blurAnim,
-          },
-        ]}
-      >
-        {Platform.OS === 'ios' ? (
-          <BlurView intensity={55} tint="dark" style={StyleSheet.absoluteFill} />
-        ) : (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.65)' }]} />
-        )}
-      </Animated.View>
     </View>
   );
 }
@@ -281,187 +338,233 @@ export function DashboardScreen({ statsTick, onOpenSettings }: Props) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: unrot.bg,
   },
-  rootHome: {
-    backgroundColor: '#000000',
-  },
-  rootJournal: {
+  fill: {
     flex: 1,
-    backgroundColor: '#000000',
-  },
-  hudRoot: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  topChrome: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  dangerCluster: {
-    position: 'absolute',
-    left: GRID_GUTTER,
-    right: GRID_GUTTER,
-    alignItems: 'center',
-    zIndex: 4,
-  },
-  dangerFrame: {
-    position: 'relative',
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    maxWidth: '100%',
-  },
-  cornerTL: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 16,
-    height: 16,
-    borderTopWidth: 1,
-    borderLeftWidth: 1,
-    borderColor: SIGNAL_AMBER,
-  },
-  cornerBR: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 16,
-    height: 16,
-    borderBottomWidth: 1,
-    borderRightWidth: 1,
-    borderColor: SIGNAL_AMBER,
-  },
-  dangerText: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    color: SIGNAL_AMBER,
-    textAlign: 'center',
-    letterSpacing: 0.6,
-    lineHeight: 15,
-  },
-  coreCluster: {
-    position: 'absolute',
-    left: GRID_GUTTER,
-    right: GRID_GUTTER,
-    alignItems: 'center',
-    zIndex: 5,
-  },
-  coreValue: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 82,
-    lineHeight: 86,
-    color: '#FFFFFF',
-    fontWeight: '200',
-    letterSpacing: -5,
-    textAlign: 'center',
-    fontVariant: ['tabular-nums'],
-    textShadowColor: 'rgba(255,255,255,0.45)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 20,
-  },
-  coreSublabel: {
-    marginTop: 10,
-    fontFamily: fontFamilies.mono,
-    fontSize: 9,
-    letterSpacing: 5,
-    color: '#444444',
-    textTransform: 'uppercase',
-    textAlign: 'center',
-  },
-  trackerCluster: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 4,
-  },
-  trackerLabel: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 8,
-    color: '#666666',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  trackerMain: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 14,
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  trackRail: {
-    width: '100%',
-    maxWidth: 320,
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    alignSelf: 'center',
-    overflow: 'hidden',
-  },
-  trackFill: {
-    height: '100%',
-    backgroundColor: CYAN_TRACK,
-  },
-  extRefLabel: {
-    position: 'absolute',
-    zIndex: 10,
-    fontFamily: fontFamilies.mono,
-    fontSize: 6,
-    letterSpacing: 1.2,
-    color: 'rgba(255,255,255,0.38)',
-    textTransform: 'uppercase',
-  },
-  topBar: {
-    paddingBottom: spacing.sm,
-  },
-  topBarAlignStart: {
-    alignItems: 'flex-start',
-    width: '100%',
-  },
-  backText: {
-    fontFamily: fontFamilies.monoBold,
-    fontSize: 9,
-    color: '#FFFFFF',
-    letterSpacing: 4,
-    opacity: 0.88,
-    textTransform: 'uppercase',
   },
   scroll: {
     flex: 1,
+    backgroundColor: unrot.bg,
   },
-  journalScrollContent: {
-    paddingHorizontal: GRID_GUTTER,
-    paddingBottom: spacing.md,
+  homeContent: {
+    flexGrow: 1,
   },
-  journalTitle: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 7,
-    color: '#444444',
+  topNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  navHit: {
+    paddingVertical: 6,
+  },
+  navSerif: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 14,
+    letterSpacing: 0.15,
+    color: unrot.ink,
+  },
+  homeDate: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 13,
+    lineHeight: 20,
+    color: unrot.muted,
+    marginBottom: 6,
+  },
+  homeTagline: {
+    fontFamily: unrotFonts.heroSerifItalic,
+    fontSize: 20,
+    lineHeight: 28,
+    color: unrot.ink,
+    letterSpacing: -0.2,
+    marginBottom: 36,
+    opacity: 0.92,
+  },
+  heroSection: {
+    marginBottom: 44,
+  },
+  monoLabel: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
     letterSpacing: 4,
+    color: unrot.ink,
     textTransform: 'uppercase',
-    marginTop: 28,
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  feedEmpty: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    color: monolith.muted,
-    letterSpacing: 2,
+  heroNumber: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 112,
+    lineHeight: 116,
+    color: unrot.ink,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -3,
   },
-  journalGhostLine: {
-    fontFamily: fontFamilies.mono,
+  metricsBand: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 48,
+  },
+  metricCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  metricGutter: {
+    width: 28,
+  },
+  monoLabelMuted: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
+    letterSpacing: 3,
+    color: unrot.muted,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  metricStat: {
+    fontFamily: unrotFonts.interLight,
+    fontSize: 34,
+    lineHeight: 40,
+    color: unrot.ink,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.5,
+  },
+  metricStatUnit: {
+    fontFamily: unrotFonts.interLight,
+    fontSize: 20,
+    lineHeight: 40,
+    color: unrot.muted,
+  },
+  metricCaption: {
+    marginTop: 8,
+    fontFamily: unrotFonts.interRegular,
     fontSize: 11,
-    color: 'rgba(255,255,255,0.62)',
-    letterSpacing: 0.5,
-    marginBottom: 14,
     lineHeight: 16,
+    color: unrot.narrativeMuted,
+  },
+  insightSection: {
+    marginBottom: 8,
+  },
+  insightSerifTitle: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 22,
+    lineHeight: 28,
+    color: unrot.ink,
+    letterSpacing: -0.35,
+    marginBottom: 14,
+  },
+  dangerZoneBody: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 16,
+    lineHeight: 25,
+    color: unrot.ink,
+    letterSpacing: -0.05,
+  },
+  flexSpacer: {
+    flexGrow: 1,
+    minHeight: 40,
+  },
+  homeFooter: {
+    paddingTop: 8,
+  },
+  logHit: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  logText: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 12,
+    letterSpacing: 1.2,
+    color: unrot.ink,
+  },
+  logHint: {
+    marginTop: 8,
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 11,
+    lineHeight: 16,
+    color: unrot.muted,
+    maxWidth: 280,
+  },
+  journalTop: {
+    width: '100%',
+    paddingBottom: 8,
+  },
+  journalBackSerif: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 17,
+    letterSpacing: 0.15,
+    color: unrot.ink,
+  },
+  journalScroll: {
+    flexGrow: 1,
+  },
+  journalScreenTitle: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 42,
+    lineHeight: 48,
+    color: unrot.ink,
+    marginBottom: 28,
+    letterSpacing: -0.5,
+  },
+  journalDayHeading: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 15,
+    lineHeight: 22,
+    color: unrot.muted,
+    marginBottom: 20,
+  },
+  journalDayHeadingSpaced: {
+    marginTop: 36,
+  },
+  journalEmpty: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 14,
+    lineHeight: 22,
+    color: unrot.muted,
+  },
+  journalEntry: {
+    marginBottom: 32,
+  },
+  journalEntryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  journalTime: {
+    width: 56,
+    marginRight: 16,
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 12,
+    lineHeight: 18,
+    color: unrot.muted,
+    paddingTop: 4,
+  },
+  journalEntryRight: {
+    flex: 1,
+    minWidth: 0,
+  },
+  journalIntent: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 16,
+    lineHeight: 24,
+    color: unrot.ink,
+    letterSpacing: -0.15,
+  },
+  journalIntentDetail: {
+    marginTop: 8,
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 13,
+    lineHeight: 20,
+    color: unrot.muted,
+  },
+  moodPill: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 100,
+  },
+  moodPillText: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 11,
+    letterSpacing: 0.3,
   },
 });

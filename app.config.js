@@ -4,6 +4,7 @@
  * EAS:  eas secret:create --scope project --name APPLE_TEAM_ID --value YOUR_10_CHAR_TEAM_ID
  * Local prebuild:  APPLE_TEAM_ID=XXXXXXXXXX npx expo prebuild --platform ios
  */
+
 module.exports = ({ config }) => {
   const teamId = process.env.APPLE_TEAM_ID || 'YOUR_APPLE_TEAM_ID';
 
