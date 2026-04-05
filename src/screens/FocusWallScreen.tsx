@@ -46,6 +46,8 @@ type Props = {
   onInterceptPassGranted?: () => void;
   onLogSaved?: () => void;
   onFlowAbandoned?: () => void;
+  /** Fired only when the user taps Exit (not Continue, not OS back). */
+  onExitPress?: () => void | Promise<unknown>;
   passDurationMinutes: number;
 };
 
@@ -94,6 +96,7 @@ export function FocusWallScreen({
   onInterceptPassGranted,
   onLogSaved,
   onFlowAbandoned,
+  onExitPress,
   passDurationMinutes: _passDurationMinutes,
 }: Props) {
   const insets = useSafeAreaInsets();
@@ -140,8 +143,11 @@ export function FocusWallScreen({
 
   const exitReflectiveLog = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    dismissWithoutSave();
-  }, [dismissWithoutSave]);
+    void (async () => {
+      await onExitPress?.();
+      dismissWithoutSave();
+    })();
+  }, [dismissWithoutSave, onExitPress]);
 
   const pickMood = (m: (typeof MOODS)[number]) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

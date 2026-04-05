@@ -1,39 +1,67 @@
+import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  AppState,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MonitoredAppIcon } from '../components/MonitoredAppIcon';
+import {
+  getPassDurationMinutes,
+  PASS_DURATION_MINUTES_DEFAULT,
+  PASS_DURATION_MINUTES_MAX,
+  PASS_DURATION_MINUTES_MIN,
+  setPassDurationMinutes,
+} from '../lib/accessPass';
 import { DISTRACTION_APPS } from '../lib/distractionApps';
 import { getMonitoredAppIds, setAppMonitored } from '../lib/monitoredApps';
 import { unrot, unrotFonts } from '../theme';
 
 const G = unrot.gutter;
-const ROW_GAP = 32;
+const ROW_GAP = 24;
 
 type Props = {
   tabBarInset: number;
   onGoBack: () => void;
+  onReplayOnboarding?: () => void;
 };
 
-export function SettingsScreen({ tabBarInset, onGoBack }: Props) {
+export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Props) {
   const insets = useSafeAreaInsets();
   const [monitored, setMonitored] = useState<Set<string>>(new Set());
+  const [logEveryMinutes, setLogEveryMinutes] = useState(PASS_DURATION_MINUTES_DEFAULT);
 
   const refresh = useCallback(async () => {
     const ids = await getMonitoredAppIds();
     setMonitored(new Set(ids));
   }, []);
 
+  const refreshPassMinutes = useCallback(async () => {
+    const m = await getPassDurationMinutes();
+    setLogEveryMinutes(m);
+  }, []);
+
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void refreshPassMinutes();
+  }, [refresh, refreshPassMinutes]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') void refresh();
+      if (s === 'active') {
+        void refresh();
+        void refreshPassMinutes();
+      }
     });
     return () => sub.remove();
-  }, [refresh]);
+  }, [refresh, refreshPassMinutes]);
 
   const toggleApp = async (appId: string, on: boolean) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -75,27 +103,77 @@ export function SettingsScreen({ tabBarInset, onGoBack }: Props) {
       >
         <Text style={styles.screenTitle}>Settings</Text>
 
-        <Text style={[styles.sectionTitle, styles.sectionTitleTight]}>Monitored apps</Text>
+        {onReplayOnboarding ? (
+          <>
+            <Text style={[styles.sectionTitle, styles.sectionTitleTight]}>Setup</Text>
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onReplayOnboarding();
+              }}
+              style={styles.onboardingRow}
+              accessibilityRole="button"
+              accessibilityLabel="Walk through setup again"
+            >
+              <Text style={styles.onboardingRowTitle}>Walk through setup again</Text>
+              <Text style={styles.onboardingRowHint}>Replay the intro and baseline questions.</Text>
+            </Pressable>
+          </>
+        ) : null}
+
+        <Text
+          style={[
+            styles.sectionTitle,
+            onReplayOnboarding ? styles.sectionTitleSpaced : styles.sectionTitleTight,
+          ]}
+        >
+          Reclaimed time
+        </Text>
+        <Text style={styles.logCadenceBody}>
+          After you log, monitored apps stay open for this long before the log returns.
+        </Text>
+        <View style={styles.sliderBlock}>
+          <Slider
+            style={styles.sliderTrack}
+            minimumValue={PASS_DURATION_MINUTES_MIN}
+            maximumValue={PASS_DURATION_MINUTES_MAX}
+            step={1}
+            value={logEveryMinutes}
+            onValueChange={setLogEveryMinutes}
+            onSlidingComplete={(v) => {
+              void Haptics.selectionAsync();
+              void setPassDurationMinutes(v);
+            }}
+            minimumTrackTintColor={unrot.ink}
+            maximumTrackTintColor={unrot.choiceMuted}
+            thumbTintColor={Platform.OS === 'android' ? unrot.ink : undefined}
+          />
+          <Text style={styles.sliderValue}>{logEveryMinutes} min</Text>
+        </View>
+
+        <Text style={[styles.sectionTitle, styles.sectionTitleSpaced]}>Monitored apps</Text>
 
         {DISTRACTION_APPS.map((app) => {
           const on = monitored.has(app.id);
           return (
-            <Pressable
-              key={app.id}
-              onPress={() => void toggleApp(app.id, !on)}
-              style={({ pressed }) => [styles.appRow, pressed && { opacity: 0.55 }]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}
-              accessibilityLabel={`${app.label}, ${on ? 'monitored' : 'not monitored'}`}
-            >
+            <View key={app.id} style={styles.appRow} accessibilityRole="none">
               <View style={styles.appIconWrap}>
                 <MonitoredAppIcon appId={app.id} size={36} muted={!on} />
               </View>
               <View style={styles.appCopy}>
                 <Text style={styles.appName}>{app.label}</Text>
               </View>
-              <Text style={[styles.appToggle, !on && styles.appToggleOff]}>{on ? 'On' : 'Off'}</Text>
-            </Pressable>
+              <View style={styles.switchWrap}>
+                <Switch
+                  value={on}
+                  onValueChange={(v) => void toggleApp(app.id, v)}
+                  accessibilityLabel={app.label}
+                  trackColor={{ false: unrot.choiceMuted, true: unrot.ink }}
+                  thumbColor={Platform.OS === 'android' ? '#FFFFFF' : undefined}
+                  ios_backgroundColor={unrot.choiceMuted}
+                />
+              </View>
+            </View>
           );
         })}
       </ScrollView>
@@ -145,7 +223,52 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sectionTitleTight: {
+    marginBottom: 8,
+  },
+  logCadenceBody: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 14,
+    lineHeight: 22,
+    color: unrot.muted,
+    marginBottom: 16,
+  },
+  sectionTitleSpaced: {
+    marginTop: 36,
     marginBottom: 22,
+  },
+  sliderBlock: {
+    marginBottom: 8,
+  },
+  sliderTrack: {
+    width: '100%',
+    height: 40,
+  },
+  sliderValue: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 20,
+    lineHeight: 28,
+    color: unrot.ink,
+    marginTop: 4,
+    letterSpacing: -0.2,
+  },
+  onboardingRow: {
+    alignSelf: 'stretch',
+    paddingVertical: 14,
+    marginBottom: 8,
+  },
+  onboardingRowTitle: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 16,
+    lineHeight: 24,
+    color: unrot.ink,
+    letterSpacing: -0.15,
+  },
+  onboardingRowHint: {
+    marginTop: 4,
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 13,
+    lineHeight: 19,
+    color: unrot.muted,
   },
   appRow: {
     flexDirection: 'row',
@@ -154,12 +277,15 @@ const styles = StyleSheet.create({
   },
   appIconWrap: {
     width: 44,
+    height: 36,
     alignItems: 'center',
-    marginRight: 14,
+    justifyContent: 'center',
+    marginRight: 12,
   },
   appCopy: {
     flex: 1,
     minWidth: 0,
+    marginRight: 12,
   },
   appName: {
     fontFamily: unrotFonts.heroSerif,
@@ -168,15 +294,9 @@ const styles = StyleSheet.create({
     color: unrot.ink,
     letterSpacing: -0.15,
   },
-  appToggle: {
-    fontFamily: unrotFonts.interBold,
-    fontSize: 12,
-    lineHeight: 24,
-    color: unrot.ink,
-    marginLeft: 8,
-  },
-  appToggleOff: {
-    fontFamily: unrotFonts.interRegular,
-    color: unrot.narrativeMuted,
+  switchWrap: {
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

@@ -15,12 +15,24 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BrandAppIcon, type BrandAppId } from '../components/BrandAppIcon';
-import { PrimaryButton } from '../components/PrimaryButton';
 import {
   saveOnboardingProfile,
   setOnboardingComplete,
 } from '../lib/onboardingStorage';
-import { colors, fontFamilies, spacing } from '../theme';
+import { spacing, unrot, unrotFonts } from '../theme';
+
+/** Align with Dashboard home surface + type */
+const OB_PAD_H = 28;
+const OB_INK = '#111111';
+const OB_SECONDARY = '#8A8A8A';
+const OB_LABEL = '#A0A0A0';
+const OB_INSIGHT = '#333333';
+const OB_TILE = '#F2F2F2';
+const OB_HAIRLINE = 'rgba(17, 17, 17, 0.08)';
+const OB_RADIUS = 20;
+const OB_HERO = '#111111';
+const OB_WHITE = '#FFFFFF';
+const OB_HERO_MUTED = 'rgba(255, 255, 255, 0.55)';
 
 const ONBOARD_APP_IDS: { key: string; id: BrandAppId; a11yName: string }[] = [
   { key: 'tiktok', id: 'tiktok', a11yName: 'TikTok' },
@@ -46,12 +58,6 @@ const HOURS_SLIDER_MIN = 1;
 const HOURS_SLIDER_MAX = 12;
 const HOURS_SLIDER_STEP = 0.5;
 const HOURS_SLIDER_DEFAULT = 3;
-
-const OLED_BLACK = '#000000';
-const OFF_WHITE = '#F5F5F5';
-const DEEP_GREY = '#444444';
-const ACTION_WHITE = '#FFFFFF';
-const DEEP_CHARCOAL = '#222222';
 
 function formatHoursForStorage(h: number): string {
   const r = Math.round(h * 10) / 10;
@@ -82,7 +88,7 @@ function TypewriterText({ text, active }: { text: string; active: boolean }) {
     return () => clearInterval(timer);
   }, [active, text]);
 
-  return <Text style={styles.line}>{visibleText}</Text>;
+  return <Text style={styles.editorialLine}>{visibleText}</Text>;
 }
 
 export function OnboardingFlow({ onDone }: Props) {
@@ -269,7 +275,7 @@ export function OnboardingFlow({ onDone }: Props) {
               value={name}
               onChangeText={setName}
               placeholder="First name"
-              placeholderTextColor={colors.inkFaint}
+              placeholderTextColor={OB_LABEL}
               style={styles.input}
               returnKeyType="done"
               onSubmitEditing={() => ctaOk && void goNext()}
@@ -319,9 +325,9 @@ export function OnboardingFlow({ onDone }: Props) {
                   setSliderInteracted(true);
                   void Haptics.selectionAsync();
                 }}
-                minimumTrackTintColor={ACTION_WHITE}
-                maximumTrackTintColor={DEEP_GREY}
-                thumbTintColor={ACTION_WHITE}
+                minimumTrackTintColor={OB_INK}
+                maximumTrackTintColor={unrot.choiceMuted}
+                thumbTintColor={Platform.OS === 'android' ? OB_INK : undefined}
               />
               <Animated.View style={{ transform: [{ scale: hoursPulse }] }}>
                 <Text style={styles.sliderHoursBig}>{formatHoursForStorage(hoursValue)}</Text>
@@ -333,14 +339,14 @@ export function OnboardingFlow({ onDone }: Props) {
         );
       case 7:
         return (
-          <View style={styles.centerBlock}>
-            <Text style={styles.impactKicker}>AT YOUR CURRENT PACE</Text>
-            <Text style={styles.line}>
-              You lose about <Text style={styles.em}>{daysYear}</Text> full days yearly to the feed.
+          <View style={styles.impactHeroCard}>
+            <Text style={styles.impactHeroKicker}>AT YOUR CURRENT PACE</Text>
+            <Text style={styles.impactHeroLine}>
+              You lose about <Text style={styles.impactHeroEm}>{daysYear}</Text> full days yearly to the feed.
             </Text>
-            <Text style={[styles.line, styles.lineGap]}>
-              Across an 80-year life, that compounds to roughly <Text style={styles.em}>{yearsSpentScrolling}</Text> years
-              scrolling if nothing changes.
+            <Text style={[styles.impactHeroLine, styles.impactHeroLineGap]}>
+              Across an 80-year life, that compounds to roughly <Text style={styles.impactHeroEm}>{yearsSpentScrolling}</Text>{' '}
+              years scrolling if nothing changes.
             </Text>
           </View>
         );
@@ -392,7 +398,7 @@ export function OnboardingFlow({ onDone }: Props) {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.root, { paddingTop: insets.top + spacing.md }]}
+      style={[styles.root, { paddingTop: insets.top + 16 }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -418,7 +424,20 @@ export function OnboardingFlow({ onDone }: Props) {
       </ScrollView>
       {step !== 9 ? (
         <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.lg }]}>
-          <PrimaryButton label="NEXT" onPress={() => void goNext()} enabled={ctaOk} />
+          <Pressable
+            onPress={() => void goNext()}
+            disabled={!ctaOk}
+            style={({ pressed }) => [
+              styles.nextButton,
+              !ctaOk && styles.nextButtonDisabled,
+              pressed && ctaOk && styles.nextButtonPressed,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Next"
+            accessibilityState={{ disabled: !ctaOk }}
+          >
+            <Text style={styles.nextButtonLabel}>NEXT</Text>
+          </Pressable>
         </View>
       ) : null}
     </KeyboardAvoidingView>
@@ -426,72 +445,76 @@ export function OnboardingFlow({ onDone }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: OLED_BLACK },
-  scroll: { flexGrow: 1, paddingHorizontal: spacing.xl, paddingBottom: spacing.xxl },
+  root: { flex: 1, backgroundColor: unrot.bg },
+  scroll: { flexGrow: 1, paddingHorizontal: OB_PAD_H, paddingBottom: spacing.xxl },
   brandMark: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 10,
-    letterSpacing: 6,
-    color: DEEP_GREY,
-    marginBottom: spacing.lg,
-    opacity: 0.72,
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 9,
+    letterSpacing: 3,
+    color: OB_SECONDARY,
+    marginBottom: spacing.md,
+    opacity: 0.85,
   },
-  progressHeader: { marginBottom: spacing.xl + 4 },
+  progressHeader: { marginBottom: spacing.lg },
   progressFraction: {
     alignSelf: 'flex-end',
-    fontFamily: fontFamilies.mono,
-    fontSize: 12,
-    color: DEEP_GREY,
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 11,
+    color: OB_LABEL,
     fontVariant: ['tabular-nums'],
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
     marginBottom: 10,
   },
-  progressTrack: { height: 2, borderRadius: 1, backgroundColor: DEEP_GREY, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 1, backgroundColor: OFF_WHITE },
-  bodyWrap: { flex: 1, minHeight: 272, justifyContent: 'center', paddingTop: spacing.md, paddingRight: 2 },
-  line: {
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 30,
-    lineHeight: 38,
-    color: OFF_WHITE,
-    letterSpacing: -0.75,
+  progressTrack: { height: 2, borderRadius: 1, backgroundColor: unrot.choiceMuted, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 1, backgroundColor: OB_INK },
+  bodyWrap: { flex: 1, minHeight: 272, justifyContent: 'center', paddingTop: spacing.sm, paddingRight: 2 },
+  /** Narrative steps — home insight voice */
+  editorialLine: {
+    fontFamily: unrotFonts.interLight,
+    fontSize: 19,
+    lineHeight: 30,
+    color: OB_INSIGHT,
+    letterSpacing: -0.2,
   },
-  lineGap: { marginTop: spacing.xl + 6 },
-  em: { color: OFF_WHITE, fontFamily: fontFamilies.mono, fontVariant: ['tabular-nums'] },
-  impactKicker: { fontFamily: fontFamilies.mono, fontSize: 10, letterSpacing: 2.4, color: DEEP_GREY, marginBottom: 6 },
-  centerBlock: { gap: spacing.xl + 4 },
-  appsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md + 4, justifyContent: 'flex-start' },
+  centerBlock: { gap: spacing.lg + 8 },
+  appsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'flex-start' },
   appChip: {
     width: 66,
     height: 66,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: OLED_BLACK,
-    borderRadius: 22,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: DEEP_GREY,
+    backgroundColor: OB_WHITE,
+    borderRadius: OB_RADIUS,
+    borderWidth: 1,
+    borderColor: OB_HAIRLINE,
   },
   fieldKicker: {
-    fontFamily: fontFamilies.uiSemi,
-    fontSize: 10,
-    color: DEEP_GREY,
-    letterSpacing: 1.8,
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
+    color: OB_SECONDARY,
+    letterSpacing: 2,
     textTransform: 'uppercase',
     marginBottom: 10,
-    opacity: 0.92,
   },
-  inputBlock: { gap: spacing.lg + 2 },
+  inputBlock: { gap: spacing.md },
+  line: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 18,
+    lineHeight: 26,
+    color: OB_INK,
+    letterSpacing: -0.2,
+  },
   input: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 24,
-    lineHeight: 32,
-    color: OFF_WHITE,
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 22,
+    lineHeight: 30,
+    color: OB_INK,
     backgroundColor: 'transparent',
-    borderBottomWidth: 1.5,
-    borderBottomColor: DEEP_GREY,
-    paddingVertical: spacing.md,
-    marginTop: spacing.sm,
-    letterSpacing: -0.35,
+    borderBottomWidth: 1,
+    borderBottomColor: OB_HAIRLINE,
+    paddingVertical: 14,
+    marginTop: 4,
+    letterSpacing: -0.2,
   },
   ageGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: spacing.sm },
   ageBtn: {
@@ -499,63 +522,163 @@ const styles = StyleSheet.create({
     minWidth: '46%',
     paddingVertical: 16,
     paddingHorizontal: spacing.sm,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: DEEP_CHARCOAL,
+    borderRadius: OB_RADIUS,
+    borderWidth: 1,
+    borderColor: OB_HAIRLINE,
     alignItems: 'center',
+    backgroundColor: OB_WHITE,
   },
-  ageBtnOn: { borderColor: OFF_WHITE, borderWidth: 1, backgroundColor: OFF_WHITE },
-  ageBtnPressed: { opacity: 0.82 },
-  ageBtnText: { fontFamily: fontFamilies.uiSemi, fontSize: 16, color: DEEP_GREY, letterSpacing: -0.15 },
-  ageBtnTextOn: { color: OLED_BLACK },
-  sliderStepOnly: { gap: spacing.xl + 8 },
+  ageBtnOn: { borderColor: OB_INK, backgroundColor: OB_TILE },
+  ageBtnPressed: { opacity: 0.88 },
+  ageBtnText: { fontFamily: unrotFonts.heroSerif, fontSize: 15, color: OB_SECONDARY, letterSpacing: -0.1 },
+  ageBtnTextOn: { color: OB_INK },
+  sliderStepOnly: { gap: spacing.lg + 4 },
   sliderColumn: { marginTop: spacing.md, gap: spacing.md },
-  sliderRowTrack: { width: '100%', height: 52 },
+  sliderRowTrack: { width: '100%', height: 44 },
   sliderHoursBig: {
-    fontFamily: fontFamilies.mono,
-    fontSize: 48,
-    lineHeight: 54,
-    color: OFF_WHITE,
-    letterSpacing: -1,
+    fontFamily: unrotFonts.interLight,
+    fontSize: 34,
+    lineHeight: 40,
+    color: OB_INK,
+    letterSpacing: -0.5,
     fontVariant: ['tabular-nums'],
   },
   sliderUnit: {
-    fontFamily: fontFamilies.ui,
-    fontSize: 13,
-    color: DEEP_GREY,
-    letterSpacing: 1,
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
+    color: OB_LABEL,
+    letterSpacing: 2,
     textTransform: 'uppercase',
+    marginTop: 8,
+  },
+  sliderCaption: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 14,
+    color: OB_SECONDARY,
+    marginTop: spacing.sm,
+    letterSpacing: -0.05,
+  },
+  impactHeroCard: {
+    alignSelf: 'stretch',
+    backgroundColor: OB_HERO,
+    borderRadius: OB_RADIUS,
+    paddingHorizontal: 28,
+    paddingVertical: 28,
     marginTop: 4,
   },
-  sliderCaption: { fontFamily: fontFamilies.uiSemi, fontSize: 16, color: DEEP_GREY, marginTop: spacing.sm, letterSpacing: -0.2 },
-  paywall: { paddingBottom: spacing.lg, paddingTop: spacing.xs },
-  payEyebrow: { fontFamily: fontFamilies.mono, fontSize: 9, letterSpacing: 5, color: DEEP_GREY, marginBottom: 12, opacity: 0.8 },
-  payTitle: { fontFamily: fontFamilies.uiSemi, fontSize: 31, color: OFF_WHITE, letterSpacing: -0.85, lineHeight: 37, marginBottom: 10 },
-  paySubtitle: { fontFamily: fontFamilies.ui, fontSize: 17, lineHeight: 26, color: DEEP_GREY, marginBottom: spacing.xl + 4, letterSpacing: -0.15 },
-  planCard: {
-    borderRadius: 18,
-    paddingVertical: spacing.lg + 2,
-    paddingHorizontal: spacing.lg,
-    marginBottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: DEEP_CHARCOAL,
+  impactHeroKicker: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
+    letterSpacing: 2.2,
+    color: OB_HERO_MUTED,
+    marginBottom: 14,
   },
-  planCardEmphasis: { borderColor: OFF_WHITE, borderWidth: 1, backgroundColor: 'rgba(255,255,255,0.04)' },
-  planCardPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
+  impactHeroLine: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 16,
+    lineHeight: 27,
+    color: OB_WHITE,
+    letterSpacing: -0.05,
+  },
+  impactHeroLineGap: { marginTop: 18 },
+  impactHeroEm: {
+    fontFamily: unrotFonts.interLight,
+    fontSize: 17,
+    color: OB_WHITE,
+    fontVariant: ['tabular-nums'],
+  },
+  paywall: { paddingBottom: spacing.lg, paddingTop: spacing.xs },
+  payEyebrow: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
+    letterSpacing: 3,
+    color: OB_LABEL,
+    marginBottom: 12,
+  },
+  payTitle: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 34,
+    lineHeight: 40,
+    color: OB_INK,
+    letterSpacing: -0.5,
+    marginBottom: 10,
+  },
+  paySubtitle: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 15,
+    lineHeight: 22,
+    color: OB_SECONDARY,
+    marginBottom: spacing.lg,
+    letterSpacing: -0.05,
+  },
+  planCard: {
+    borderRadius: OB_RADIUS,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: OB_HAIRLINE,
+    backgroundColor: OB_WHITE,
+  },
+  planCardEmphasis: { borderColor: OB_INK, backgroundColor: OB_TILE },
+  planCardPressed: { opacity: 0.92, transform: [{ scale: 0.99 }] },
   planRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  planBadgeInline: { alignSelf: 'flex-start', marginBottom: 12, borderBottomWidth: 1, borderBottomColor: OFF_WHITE, paddingBottom: 3 },
-  planBadgeText: { fontFamily: fontFamilies.uiSemi, fontSize: 9, color: OFF_WHITE, letterSpacing: 1.2, textTransform: 'uppercase' },
-  planLabel: { fontFamily: fontFamilies.uiSemi, fontSize: 18, color: OFF_WHITE, letterSpacing: -0.35 },
-  planChevron: { fontFamily: fontFamilies.ui, fontSize: 20, color: DEEP_GREY, opacity: 0.55, marginTop: 1 },
-  planPrice: { fontFamily: fontFamilies.mono, fontSize: 15, color: DEEP_GREY, marginTop: 10, fontVariant: ['tabular-nums'], letterSpacing: -0.2 },
-  payNote: { fontFamily: fontFamilies.ui, fontSize: 12, color: DEEP_GREY, lineHeight: 19, marginTop: spacing.xl, letterSpacing: -0.05, opacity: 0.92 },
+  planBadgeInline: {
+    alignSelf: 'flex-start',
+    marginBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: OB_INK,
+    paddingBottom: 4,
+  },
+  planBadgeText: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
+    color: OB_INK,
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+  },
+  planLabel: { fontFamily: unrotFonts.heroSerif, fontSize: 18, color: OB_INK, letterSpacing: -0.2 },
+  planChevron: { fontFamily: unrotFonts.heroSerif, fontSize: 18, color: OB_SECONDARY, marginTop: 1 },
+  planPrice: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 12,
+    color: OB_SECONDARY,
+    marginTop: 10,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.4,
+  },
+  payNote: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 12,
+    lineHeight: 18,
+    color: OB_LABEL,
+    marginTop: spacing.lg,
+    letterSpacing: -0.05,
+  },
   skipBtn: { alignSelf: 'center', paddingVertical: spacing.lg, marginTop: spacing.sm },
-  skipText: { fontFamily: fontFamilies.uiSemi, fontSize: 16, color: DEEP_GREY, letterSpacing: -0.1 },
+  skipText: { fontFamily: unrotFonts.heroSerif, fontSize: 16, color: OB_SECONDARY, letterSpacing: -0.1 },
   footer: {
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: OB_PAD_H,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255,255,255,0.1)',
+    borderTopColor: OB_HAIRLINE,
     paddingTop: spacing.lg,
-    backgroundColor: OLED_BLACK,
+    backgroundColor: unrot.bg,
+  },
+  nextButton: {
+    alignSelf: 'stretch',
+    backgroundColor: OB_INK,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+  },
+  nextButtonPressed: { opacity: 0.92 },
+  nextButtonDisabled: { opacity: 0.38 },
+  nextButtonLabel: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 12,
+    letterSpacing: 1.4,
+    color: OB_WHITE,
   },
 });

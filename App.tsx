@@ -81,7 +81,7 @@ export default function App() {
       <View style={styles.root}>
         {showOnboarding ? (
           <>
-            <StatusBar style="light" />
+            <StatusBar style="dark" />
             <OnboardingFlow
               onDone={() => {
                 setShowOnboarding(false);
@@ -89,7 +89,7 @@ export default function App() {
             />
           </>
         ) : (
-          <MainShell />
+          <MainShell onReplayOnboarding={() => setShowOnboarding(true)} />
         )}
       </View>
     </SafeAreaProvider>

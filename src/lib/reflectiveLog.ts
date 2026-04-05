@@ -111,7 +111,7 @@ export function computePrimaryTrigger(entries: LogEntry[]): string | null {
   let best: string | null = null;
   let bestN = 0;
   for (const [k, v] of counts) {
-    if (v > bestN) {
+    if (best == null || v > bestN || (v === bestN && k < best)) {
       bestN = v;
       best = k;
     }
@@ -129,7 +129,7 @@ export function computePeakHour(entries: LogEntry[]): number | null {
   let best: number | null = null;
   let bestN = 0;
   for (const [h, v] of counts) {
-    if (v > bestN) {
+    if (best == null || v > bestN || (v === bestN && h < best)) {
       bestN = v;
       best = h;
     }
@@ -177,45 +177,26 @@ export function formatDangerZoneEditorialRange(startHour24: number): string {
 export type DangerZoneInsight = {
   startHour: number;
   state: string;
-  /** Joint (hour + mood) bucket count when that pairing is the signal; 0 if from peak-hour + top-mood fallback. */
+  /** Logs in the peak hour that match `state` (mood at that time). */
   jointCount: number;
 };
 
 /**
- * “Danger zone”: the (local hour, mood) pair that shows up most in logs, else peak hour + most common mood.
- * Needs at least three entries before we surface anything.
+ * “Danger zone”: local hour when the user opens the log most often, plus the mood they log most
+ * in that hour (not a globally rare hour–mood pair). Needs at least three entries.
  */
 export function computeDangerZoneInsight(entries: LogEntry[]): DangerZoneInsight | null {
   if (entries.length < 3) return null;
 
-  const joint = new Map<string, number>();
-  for (const e of entries) {
-    const key = `${e.hour}\0${e.state}`;
-    joint.set(key, (joint.get(key) ?? 0) + 1);
-  }
+  const peakHour = computePeakHour(entries);
+  if (peakHour == null) return null;
 
-  let bestKey: string | null = null;
-  let bestN = 0;
-  for (const [k, n] of joint) {
-    if (bestKey == null || n > bestN || (n === bestN && k < bestKey)) {
-      bestN = n;
-      bestKey = k;
-    }
-  }
+  const inPeakHour = entries.filter((e) => e.hour === peakHour);
+  const state = computePrimaryTrigger(inPeakHour);
+  if (state == null) return null;
 
-  if (bestN >= 2 && bestKey != null) {
-    const tab = bestKey.indexOf('\0');
-    const hour = Number(bestKey.slice(0, tab));
-    const state = bestKey.slice(tab + 1);
-    if (!Number.isNaN(hour) && hour >= 0 && hour <= 23 && state) {
-      return { startHour: hour, state, jointCount: bestN };
-    }
-  }
-
-  const h = computePeakHour(entries);
-  const s = computePrimaryTrigger(entries);
-  if (h == null || s == null) return null;
-  return { startHour: h, state: s, jointCount: 0 };
+  const jointCount = inPeakHour.filter((e) => e.state === state).length;
+  return { startHour: peakHour, state, jointCount };
 }
 
 export function formatDangerZoneSentence(insight: DangerZoneInsight): string {

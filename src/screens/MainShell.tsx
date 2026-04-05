@@ -2,7 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, AppState, Linking, Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { shouldShowFocusWallForApp } from '../lib/accessPass';
+import { getPassDurationMinutes, shouldShowFocusWallForApp } from '../lib/accessPass';
 import {
   markBreathPlusLogRitualCompleted,
   shouldRequireBreathingBeforeReflectiveLog,
@@ -19,7 +19,6 @@ import { incrementReclaimedOnReflectiveLogExit } from '../lib/reclaimedMoments';
 import { recordFocusWallTrigger } from '../lib/rotVelocity';
 import { setLastActiveAppId } from '../lib/usageStats';
 import { registerInterceptWallHandler, requestInterceptWall } from '../lib/wallBridge';
-import { getPassDurationMinutes } from '../lib/accessPass';
 import { EDITORIAL_FADE_MS, spacing, unrot } from '../theme';
 import { BreathingInterceptModal } from './BreathingInterceptModal';
 import { DashboardScreen } from './DashboardScreen';
@@ -43,18 +42,24 @@ type InterceptSession =
   | { kind: 'breath'; app: DistractionApp }
   | { kind: 'practice'; app: DistractionApp };
 
-export function MainShell() {
+type MainShellProps = {
+  /** Opens the full onboarding flow again (e.g. from Settings). */
+  onReplayOnboarding?: () => void;
+};
+
+export function MainShell({ onReplayOnboarding }: MainShellProps) {
   const insets = useSafeAreaInsets();
   const [screen, setScreen] = useState<'dashboard' | 'settings'>('dashboard');
   const [interceptSession, setInterceptSession] = useState<InterceptSession>(null);
   const [statsTick, setStatsTick] = useState(0);
   const [passDurationMinutes, setPassDurationMinutes] = useState(10);
-  const wallMomentCountedRef = useRef(false);
   const shellFade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    void getPassDurationMinutes().then(setPassDurationMinutes);
-  }, []);
+    if (screen === 'dashboard') {
+      void getPassDurationMinutes().then(setPassDurationMinutes);
+    }
+  }, [screen]);
 
   useEffect(() => {
     shellFade.setValue(0);
@@ -68,10 +73,6 @@ export function MainShell() {
   const bottomInset = Math.max(insets.bottom, 16) + spacing.md;
 
   const dismissIntercept = useCallback(() => {
-    if (!wallMomentCountedRef.current) {
-      wallMomentCountedRef.current = true;
-      void incrementReclaimedOnReflectiveLogExit();
-    }
     setInterceptSession(null);
     setStatsTick((t) => t + 1);
     void getMonitoredAppIds();
@@ -151,10 +152,6 @@ export function MainShell() {
     interceptSession?.kind === 'reflect_after_breath' ||
     interceptSession?.kind === 'practice';
 
-  useEffect(() => {
-    if (!focusWallVisible) return;
-    wallMomentCountedRef.current = false;
-  }, [focusWallVisible]);
   const focusWallPurpose: FocusWallPurpose =
     interceptSession?.kind === 'practice' ? 'practice' : 'intercept';
   const focusWallApp =
@@ -187,7 +184,11 @@ export function MainShell() {
             />
           ) : null}
           {screen === 'settings' ? (
-            <SettingsScreen tabBarInset={bottomInset} onGoBack={() => setScreen('dashboard')} />
+            <SettingsScreen
+              tabBarInset={bottomInset}
+              onGoBack={() => setScreen('dashboard')}
+              onReplayOnboarding={onReplayOnboarding}
+            />
           ) : null}
         </Animated.View>
 
@@ -205,6 +206,7 @@ export function MainShell() {
           onInterceptPassGranted={
             afterBreathLog ? () => void markBreathPlusLogRitualCompleted() : undefined
           }
+          onExitPress={() => incrementReclaimedOnReflectiveLogExit()}
           onClose={dismissIntercept}
         />
 

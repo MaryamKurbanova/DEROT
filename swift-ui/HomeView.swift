@@ -7,6 +7,8 @@ import UIKit
 // MARK: - Grayscale palette (#FFFFFF background; ink + grays only)
 private enum HomeColor {
     static let background = Color.white
+    /// Matches RN `HOME_BOX` — soft metric tiles.
+    static let softBox = Color(red: 250 / 255, green: 250 / 255, blue: 250 / 255) // #FAFAFA
     static let ink = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255) // #111111
     static let gray8A = Color(red: 138 / 255, green: 138 / 255, blue: 138 / 255) // #8A8A8A
     static let grayA0 = Color(red: 160 / 255, green: 160 / 255, blue: 160 / 255) // #A0A0A0
@@ -52,25 +54,43 @@ private enum HomeFont {
     }
 }
 
+/// Matches RN `ZERO_H_M` / journal intent line when reclaimed or screen time is effectively zero.
+private let kHomeZeroHM = "0 h 0 m"
+
 // MARK: - Hero
 private struct HomeHero: View {
     let hoursText: String
 
+    /// ~50% of screen width, capped to fit page + hero padding (matches RN `HomeHeroSection`).
+    private static func reclaimedZeroBlockWidth() -> CGFloat {
+        let w = UIScreen.main.bounds.width
+        return min(w * 0.5, w - 100)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("RECLAIMED HOURS")
+            Text("Reclaimed Hours")
                 .font(HomeFont.monoLabel(8))
-                .tracking(4)
+                .tracking(2)
                 .foregroundStyle(HomeColor.grayA0)
-                .textCase(.uppercase)
                 .padding(.bottom, 10)
 
-            Text(hoursText)
-                .font(HomeFont.playfair(112))
-                .foregroundStyle(HomeColor.ink)
-                .lineSpacing(-4)
-                .minimumScaleFactor(0.38)
-                .lineLimit(1)
+            if hoursText == kHomeZeroHM {
+                Text(hoursText)
+                    .font(HomeFont.playfair(96))
+                    .foregroundStyle(HomeColor.ink)
+                    .tracking(-1.5)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.45)
+                    .frame(maxWidth: Self.reclaimedZeroBlockWidth(), alignment: .leading)
+            } else {
+                Text(hoursText)
+                    .font(HomeFont.playfair(112))
+                    .foregroundStyle(HomeColor.ink)
+                    .lineSpacing(-4)
+                    .minimumScaleFactor(0.38)
+                    .lineLimit(2)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -91,11 +111,20 @@ private struct HomeMetricColumn: View {
                 .textCase(.uppercase)
                 .padding(.bottom, 8)
 
-            Text(value)
-                .font(HomeFont.interLight(34))
-                .foregroundStyle(HomeColor.ink)
-                .minimumScaleFactor(0.85)
-                .lineLimit(2)
+            if value == kHomeZeroHM {
+                Text(value)
+                    .font(HomeFont.playfair(16))
+                    .foregroundStyle(HomeColor.ink)
+                    .tracking(-0.15)
+                    .lineSpacing(8)
+                    .lineLimit(1)
+            } else {
+                Text(value)
+                    .font(HomeFont.interLight(34))
+                    .foregroundStyle(HomeColor.ink)
+                    .minimumScaleFactor(0.85)
+                    .lineLimit(2)
+            }
 
             Text(caption)
                 .font(HomeFont.inter(11))
@@ -230,12 +259,7 @@ public struct HomeView: View {
                     Text(dateString)
                         .font(HomeFont.inter(13))
                         .foregroundStyle(HomeColor.gray8A)
-                        .padding(.bottom, 6)
-
-                    Text("Reclaimed hours.")
-                        .font(HomeFont.playfairItalic(20))
-                        .foregroundStyle(HomeColor.ink.opacity(0.92))
-                        .padding(.bottom, 36)
+                        .padding(.bottom, 20)
 
                     HomeHero(hoursText: reclaimedHours)
                         .padding(.bottom, 44)
@@ -291,18 +315,33 @@ public struct HomeView: View {
         }
     }
 
+    private let metricTileRadius: CGFloat = 20
+    private let metricMiddleGap: CGFloat = 16
+
+    /// Two separate rounded boxes with a clear gap between them (matches RN).
     private var metricsRow: some View {
-        HStack(alignment: .top, spacing: 28) {
+        HStack(alignment: .top, spacing: metricMiddleGap) {
             HomeMetricColumn(
                 label: "SCREEN TIME",
                 value: screenTimeDisplay,
                 caption: "Today"
             )
+            .padding(.horizontal, 18)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HomeColor.softBox)
+            .clipShape(RoundedRectangle(cornerRadius: metricTileRadius, style: .continuous))
+
             HomeMetricColumn(
                 label: "MOMENTS",
                 value: "\(momentsCount)",
                 caption: "Reclaimed today"
             )
+            .padding(.horizontal, 18)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HomeColor.softBox)
+            .clipShape(RoundedRectangle(cornerRadius: metricTileRadius, style: .continuous))
         }
     }
 }
@@ -312,7 +351,7 @@ public struct HomeView: View {
     HomeView(
         dateString: "Friday, April 3",
         reclaimedHours: "12",
-        screenTimeDisplay: "5.2 hrs",
+        screenTimeDisplay: "5.2 h",
         momentsCount: 3,
         dangerBody: "You are more likely to rot between 9pm and 10pm when feeling Bored.",
         dangerSubline: nil,

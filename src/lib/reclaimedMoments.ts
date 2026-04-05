@@ -36,8 +36,8 @@ export async function getReclaimedMomentsToday(): Promise<number> {
 }
 
 /**
- * Once per reflective log session when the user leaves the log (any dismiss:
- * Exit, swipe, or tapping Continue closes the sheet).
+ * When the user taps **Exit** on the reflective log (not Continue).
+ * Count resets at local midnight via {@link getReclaimedMomentsToday}.
  */
 export async function incrementReclaimedOnReflectiveLogExit(): Promise<number> {
   const cur = ymd();
