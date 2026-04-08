@@ -2,6 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Easing,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -34,7 +35,9 @@ const PLACEHOLDER_COLOR = 'rgba(26, 26, 26, 0.35)';
 const HAIRLINE = 'rgba(26, 26, 26, 0.1)';
 const CHIP_BORDER = 'rgba(26, 26, 26, 0.14)';
 const NOTE_SURFACE = 'rgba(26, 26, 26, 0.04)';
-const CHOICE_SELECTED_WASH = 'rgba(26, 26, 26, 0.07)';
+/** How long to hold for a choice to lock in (ms). */
+const BAR_FILL_MS = 520;
+const INK_HEX = '#1A1A1A';
 
 type Props = {
   visible: boolean;
@@ -51,6 +54,112 @@ type Props = {
   passDurationMinutes: number;
 };
 
+function BarChoiceRow<T extends string>({
+  label,
+  isLast,
+  locked,
+  siblingLocked,
+  onCommit,
+}: {
+  label: T;
+  isLast: boolean;
+  locked: boolean;
+  siblingLocked: boolean;
+  onCommit: () => void;
+}) {
+  const progress = useRef(new Animated.Value(locked ? 1 : 0)).current;
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
+  const fillCompletedRef = useRef(false);
+
+  useEffect(() => {
+    progress.setValue(locked ? 1 : 0);
+    if (!locked) fillCompletedRef.current = false;
+  }, [locked, progress]);
+
+  useEffect(() => {
+    return () => {
+      animRef.current?.stop();
+    };
+  }, []);
+
+  const disabled = siblingLocked && !locked;
+
+  const onPressIn = () => {
+    if (disabled || locked) return;
+    fillCompletedRef.current = false;
+    animRef.current?.stop();
+    progress.setValue(0);
+    const run = Animated.timing(progress, {
+      toValue: 1,
+      duration: BAR_FILL_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    });
+    animRef.current = run;
+    run.start(({ finished }) => {
+      if (finished && !fillCompletedRef.current) {
+        fillCompletedRef.current = true;
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        onCommit();
+      }
+    });
+  };
+
+  const onPressOut = () => {
+    if (locked || fillCompletedRef.current) return;
+    animRef.current?.stop();
+    animRef.current = null;
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: 220,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: false,
+    }).start();
+  };
+
+  const fillWidth = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+  });
+
+  const labelColor = progress.interpolate({
+    inputRange: [0, 0.38, 0.72, 1],
+    outputRange: [INK_HEX, INK_HEX, '#FFFFFF', '#FFFFFF'],
+  });
+
+  return (
+    <Pressable
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      disabled={disabled}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: locked, disabled }}
+      accessibilityHint="Tap and hold until the bar fills to lock this answer."
+      style={({ pressed }) => [
+        styles.choiceBigBarWrap,
+        !isLast && styles.choiceBigBarWrapSpaced,
+        disabled && styles.choiceBigBarDimmed,
+        pressed && !disabled && !locked && styles.choiceBigBarPressed,
+      ]}
+    >
+      <View style={styles.choiceBigBarInner}>
+        <Animated.View
+          style={[styles.choiceBigBarFill, locked && styles.choiceBigBarFillFull, { width: fillWidth }]}
+        />
+        <Animated.Text
+          style={[
+            styles.choiceBigBarLabel,
+            locked && styles.choiceBigBarLabelLocked,
+            { color: labelColor },
+          ]}
+        >
+          {label}
+        </Animated.Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function ReflectiveChoices<T extends string>({
   options,
   selected,
@@ -60,26 +169,20 @@ function ReflectiveChoices<T extends string>({
   selected: T | null;
   onPick: (t: T) => void;
 }) {
+  const siblingLocked = selected !== null;
   return (
     <View style={styles.choiceList} accessibilityRole="radiogroup">
       {options.map((opt, index) => {
-        const isOn = selected === opt;
         const isLast = index === options.length - 1;
         return (
-          <Pressable
+          <BarChoiceRow
             key={opt}
-            onPress={() => onPick(opt)}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: isOn }}
-            style={({ pressed }) => [
-              styles.choiceRowItem,
-              !isLast && styles.choiceRowDivider,
-              isOn && styles.choiceRowSelected,
-              pressed && { opacity: 0.75 },
-            ]}
-          >
-            <Text style={isOn ? styles.choiceLabelSelected : styles.choiceLabel}>{opt}</Text>
-          </Pressable>
+            label={opt}
+            isLast={isLast}
+            locked={selected === opt}
+            siblingLocked={siblingLocked}
+            onCommit={() => onPick(opt)}
+          />
         );
       })}
     </View>
@@ -150,12 +253,10 @@ export function FocusWallScreen({
   }, [dismissWithoutSave, onExitPress]);
 
   const pickMood = (m: (typeof MOODS)[number]) => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setMood(m);
   };
 
   const pickIntent = (i: (typeof INTENTS)[number]) => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIntent(i);
   };
 
@@ -354,30 +455,56 @@ const styles = StyleSheet.create({
   choiceList: {
     alignSelf: 'stretch',
   },
-  choiceRowItem: {
-    paddingVertical: 17,
-    paddingHorizontal: 4,
+  choiceBigBarWrap: {
+    alignSelf: 'stretch',
   },
-  choiceRowDivider: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: HAIRLINE,
+  choiceBigBarWrapSpaced: {
+    marginBottom: 12,
   },
-  choiceRowSelected: {
-    backgroundColor: CHOICE_SELECTED_WASH,
-    marginHorizontal: -4,
-    paddingHorizontal: 8,
+  choiceBigBarDimmed: {
+    opacity: 0.36,
   },
-  choiceLabel: {
+  choiceBigBarPressed: {
+    opacity: 0.94,
+    transform: [{ scale: 0.985 }],
+  },
+  choiceBigBarInner: {
+    minHeight: 58,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: CHIP_BORDER,
+    overflow: 'hidden',
+    backgroundColor: NOTE_SURFACE,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  choiceBigBarFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: unrot.ink,
+    borderTopLeftRadius: 16,
+    borderBottomLeftRadius: 16,
+  },
+  /** When locked, width is 100% — round the trailing edge so the bar reads fully filled. */
+  choiceBigBarFillFull: {
+    borderTopRightRadius: 16,
+    borderBottomRightRadius: 16,
+  },
+  choiceBigBarLabel: {
     fontFamily: unrotFonts.interRegular,
     fontSize: 17,
     lineHeight: 24,
-    color: unrot.ink,
+    textAlign: 'center',
+    zIndex: 1,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
   },
-  choiceLabelSelected: {
+  choiceBigBarLabelLocked: {
     fontFamily: unrotFonts.interBold,
-    fontSize: 17,
-    lineHeight: 24,
-    color: unrot.ink,
   },
   noteBlock: {
     marginTop: 32,

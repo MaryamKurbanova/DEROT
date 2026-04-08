@@ -15,6 +15,7 @@ import {
 } from '../lib/interceptBridge';
 import { iosEnsureStickyMonitoring, iosStickyReportsAreAuthoritative } from '../lib/iosStickyRotUsage';
 import { getMonitoredAppIds, isAppMonitored } from '../lib/monitoredApps';
+import { awardReflectiveLogXp } from '../lib/rankXp';
 import { incrementReclaimedOnReflectiveLogExit } from '../lib/reclaimedMoments';
 import { recordFocusWallTrigger } from '../lib/rotVelocity';
 import { setLastActiveAppId } from '../lib/usageStats';
@@ -23,6 +24,7 @@ import { EDITORIAL_FADE_MS, spacing, unrot } from '../theme';
 import { BreathingInterceptModal } from './BreathingInterceptModal';
 import { DashboardScreen } from './DashboardScreen';
 import { FocusWallScreen, type FocusWallPurpose } from './FocusWallScreen';
+import { RankScreen } from './RankScreen';
 import { SettingsScreen } from './SettingsScreen';
 
 function appIdFromUrl(url: string): string | null {
@@ -49,7 +51,7 @@ type MainShellProps = {
 
 export function MainShell({ onReplayOnboarding }: MainShellProps) {
   const insets = useSafeAreaInsets();
-  const [screen, setScreen] = useState<'dashboard' | 'settings'>('dashboard');
+  const [screen, setScreen] = useState<'dashboard' | 'settings' | 'rank'>('dashboard');
   const [interceptSession, setInterceptSession] = useState<InterceptSession>(null);
   const [statsTick, setStatsTick] = useState(0);
   const [passDurationMinutes, setPassDurationMinutes] = useState(10);
@@ -174,6 +176,7 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
             <DashboardScreen
               statsTick={statsTick}
               onOpenSettings={() => setScreen('settings')}
+              onOpenRank={() => setScreen('rank')}
               onStartReflectiveLog={async () => {
                 const ids = await getMonitoredAppIds();
                 const id = ids[0] ?? DISTRACTION_APPS[0].id;
@@ -182,6 +185,9 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
                 setInterceptSession({ kind: 'practice', app });
               }}
             />
+          ) : null}
+          {screen === 'rank' ? (
+            <RankScreen tabBarInset={bottomInset} onGoBack={() => setScreen('dashboard')} />
           ) : null}
           {screen === 'settings' ? (
             <SettingsScreen
@@ -206,6 +212,12 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
           onInterceptPassGranted={
             afterBreathLog ? () => void markBreathPlusLogRitualCompleted() : undefined
           }
+          onLogSaved={() => {
+            void (async () => {
+              await awardReflectiveLogXp();
+              setStatsTick((t) => t + 1);
+            })();
+          }}
           onExitPress={() => incrementReclaimedOnReflectiveLogExit()}
           onClose={dismissIntercept}
         />

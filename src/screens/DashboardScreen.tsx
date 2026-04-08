@@ -1,6 +1,8 @@
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
   Easing,
   Platform,
@@ -15,37 +17,74 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   computeDangerZoneInsight,
-  formatEditorialLuxuryDangerLineWithFeeling,
+  formatEditorialLuxuryDangerLine,
+  formatHourRangeAmPm,
   getAllLogsForAnalytics,
+  type DangerZoneInsight,
   type LogEntry,
 } from '../lib/reflectiveLog';
 import { getReclaimedFocusSnapshot, type ReclaimedFocusSnapshot } from '../lib/reclaimedFocus';
 import { getReclaimedMomentsToday } from '../lib/reclaimedMoments';
+import {
+  DEFAULT_RANK_STATE,
+  loadRankState,
+  maybeAwardDailyScreenBonus,
+  toRankUiSnapshot,
+  type RankUiSnapshot,
+} from '../lib/rankXp';
+import Svg, { Circle } from 'react-native-svg';
 import { unrot, unrotFonts } from '../theme';
+
+const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const G = unrot.gutter;
 
-/** Home-only palette (journal unchanged). */
-const HOME_PRIMARY = '#111111';
-const HOME_SECONDARY = '#8A8A8A';
-const HOME_LABEL = '#A0A0A0';
-const HOME_SCREEN_TIME_TILE_BG = '#F2F2F2';
-/** Near-black hero + pattern cards */
-const HOME_INK_CARD = '#111111';
+/**
+ * Home — quiet editorial: sharp ink, cool neutrals, paper cards (journal unchanged).
+ */
+const HOME_PRIMARY = '#0A0A0A';
+const HOME_SECONDARY = '#6B6B6B';
+const HOME_LABEL = '#9A9A9A';
+const HOME_CARD_GRADIENT = ['#FFFFFF', '#F6F5F4', '#EEECEA'] as const;
+const HOME_CARD_GRADIENT_LOCATIONS = [0, 0.5, 1] as const;
+const HOME_CARD_BORDER = 'rgba(10, 10, 12, 0.09)';
+/** @deprecated naming — use HOME_CARD_* */
+const HOME_RANK_GRADIENT = HOME_CARD_GRADIENT;
+const HOME_RANK_GRADIENT_LOCATIONS = HOME_CARD_GRADIENT_LOCATIONS;
+const HOME_RANK_BORDER = HOME_CARD_BORDER;
+const HOME_RANK_STREAK_SURFACE = '#FFFFFF';
+const HOME_RANK_STREAK_BORDER = 'rgba(10, 10, 12, 0.08)';
+const HOME_HERO_GRADIENT = HOME_CARD_GRADIENT;
+const HOME_HERO_GRADIENT_LOCATIONS = HOME_CARD_GRADIENT_LOCATIONS;
+const HOME_HERO_BORDER = HOME_CARD_BORDER;
+const HOME_METRIC_SCREEN_GRADIENT = HOME_CARD_GRADIENT;
+const HOME_METRIC_SCREEN_GRADIENT_LOCATIONS = HOME_CARD_GRADIENT_LOCATIONS;
+const HOME_METRIC_SCREEN_BORDER = HOME_CARD_BORDER;
+const HOME_METRIC_MOMENTS_GRADIENT = HOME_CARD_GRADIENT;
+const HOME_METRIC_MOMENTS_GRADIENT_LOCATIONS = HOME_CARD_GRADIENT_LOCATIONS;
+const HOME_METRIC_MOMENTS_BORDER = HOME_CARD_BORDER;
 const HOME_PURE_WHITE = '#FFFFFF';
-const HOME_METRIC_TILE_BORDER = 'rgba(17, 17, 17, 0.08)';
-/** 24pt breathing room below dark hero before white metric row */
-const HERO_TO_METRICS_GAP = 24;
+/** Slight lift from cards */
+const HOME_CANVAS_BG = '#FAFAFA';
+/** Space below Reclaimed Time card before metric row */
+const HERO_TO_METRICS_GAP = 22;
 
-const HOME_SECTION_GAP = 16;
-const HOME_PAGE_PAD_H = 28;
+const HOME_SECTION_GAP = 20;
+const HOME_PAGE_PAD_H = 24;
 const HOME_RADIUS = 20;
-/** Space between metric tiles and editorial insight (unboxed). */
-const METRICS_TO_INSIGHT_GAP = 60;
-const HOME_INSIGHT_TEXT = '#333333';
-const LOG_TRIGGER_INK = '#111111';
-const LOG_ACCENT_BAR_W = 2;
-const LOG_ACCENT_BAR_H = 20;
+/** Space between metric tiles and danger-zone card */
+const METRICS_TO_DANGER_GAP = 22;
+const LOG_TRIGGER_INK = HOME_PRIMARY;
+/** Circular LOG — press-and-hold fills black ring around disc */
+const LOG_FAB_SIZE = 94;
+const LOG_RING_STROKE = 3.5;
+const LOG_RING_R = (LOG_FAB_SIZE - LOG_RING_STROKE) / 2 - 1;
+const LOG_RING_C = 2 * Math.PI * LOG_RING_R;
+const LOG_RING_TRACK = 'rgba(17, 17, 17, 0.1)';
+const LOG_RING_ACCENT = LOG_TRIGGER_INK;
+const LOG_RING_ACCENT_DIM = 'rgba(17, 17, 17, 0.1)';
+const LOG_RING_FILL_MS = 520;
+const LOG_RING_RESET_MS = 320;
 /** Space between insight and the ritual LOG block */
 const LOG_SECTION_TOP_MARGIN = 48;
 /** Minimum lift for the anchored LOG region on tall layouts */
@@ -61,15 +100,13 @@ const REFRESH_LINE_W = 2;
 const REFRESH_LINE_H_MIN = 10;
 const REFRESH_LINE_H_MAX = 32;
 const REFRESH_LINE_CYCLE_MS = 480;
-const LOG_RITUAL_PAD_H_REST = 16;
-const LOG_RITUAL_PAD_H_PRESS = 26;
-const LOG_PENDING_DOT_SIZE = 5;
-/** Reclaimed Hours (hero) label */
-const HOME_METRIC_LABEL_FONT_SIZE = 11;
-const HOME_METRIC_LABEL_LINE_HEIGHT = 14;
-/** Screen time / Moments tile labels — slightly smaller than hero */
-const HOME_TILE_LABEL_FONT_SIZE = 10;
-const HOME_TILE_LABEL_LINE_HEIGHT = 13;
+const LOG_INNER_DISC = 72;
+/** Reclaimed Time (hero) label */
+const HOME_METRIC_LABEL_FONT_SIZE = 10;
+const HOME_METRIC_LABEL_LINE_HEIGHT = 13;
+/** Screen time / Moments tile labels */
+const HOME_TILE_LABEL_FONT_SIZE = 9;
+const HOME_TILE_LABEL_LINE_HEIGHT = 12;
 
 const ZERO_H_M = '0 h 0 m';
 
@@ -77,7 +114,7 @@ const ZERO_H_M = '0 h 0 m';
 const TEMP_RECLAIMED_HERO_DISPLAY: string | null = '400 m';
 
 const RECLAIMED_COUNT_MS = 600;
-/** Align reclaimed-hours count-up with hero segment stagger (see homeSegHero delay). */
+/** Align reclaimed-time count-up with hero segment stagger (see homeSegHero delay). */
 const HERO_COUNT_START_DELAY_MS = 80;
 /** Align moments count-up with metrics segment stagger (see homeSegMetrics delay). */
 const METRICS_MOMENTS_COUNT_START_DELAY_MS = 120;
@@ -93,8 +130,8 @@ function reclaimedHeroAccessibilityLabel(
 ): string {
   const spoken = reclaimedHeroSpoken(display);
   let line = authoritative
-    ? `Reclaimed hours this week, ${spoken}, versus your onboarding baseline`
-    : `Reclaimed hours, ${spoken}`;
+    ? `Reclaimed time this week, ${spoken}, versus your onboarding baseline`
+    : `Reclaimed time, ${spoken}`;
   if (contextual) line += `. ${contextual}`;
   return line;
 }
@@ -134,65 +171,193 @@ const homeStyles = StyleSheet.create({
     flexGrow: 1,
   },
   topSectionOpen: {
-    marginBottom: HOME_SECTION_GAP,
+    marginBottom: 4,
     alignSelf: 'stretch',
   },
   topNav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 22,
   },
   navHit: {
-    paddingVertical: 6,
+    paddingVertical: 8,
   },
   navSerif: {
-    fontFamily: unrotFonts.heroSerif,
-    fontSize: 14,
-    letterSpacing: 0.15,
-    color: HOME_PRIMARY,
-    opacity: 0.72,
-  },
-  homeDate: {
     fontFamily: unrotFonts.interRegular,
     fontSize: 13,
-    lineHeight: 20,
+    letterSpacing: 0.35,
     color: HOME_SECONDARY,
-    marginBottom: 0,
-    opacity: 0.92,
   },
-  heroSoftOuter: {
-    backgroundColor: HOME_INK_CARD,
-    borderRadius: HOME_RADIUS,
-    paddingHorizontal: 30,
-    paddingVertical: 30,
-    marginBottom: HERO_TO_METRICS_GAP,
+  homeDate: {
+    fontFamily: unrotFonts.heroSerifItalic,
+    fontSize: 16,
+    lineHeight: 24,
+    color: HOME_PRIMARY,
+    marginBottom: 20,
+    letterSpacing: 0.08,
+    opacity: 0.72,
+  },
+  homeRankStripOuter: {
     alignSelf: 'stretch',
+    marginBottom: 16,
+    borderRadius: HOME_RADIUS,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: HOME_RANK_BORDER,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.06,
+        shadowRadius: 24,
+      },
+      android: { elevation: 4 },
+      default: {},
+    }),
   },
-  heroSubtitle: {
-    marginTop: 12,
+  homeRankStripPressed: {
+    opacity: 0.93,
+    transform: [{ scale: 0.998 }],
+  },
+  homeRankGradientPad: {
+    paddingHorizontal: 22,
+    paddingVertical: 20,
+  },
+  homeRankKickerLite: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 9,
+    letterSpacing: 2.4,
+    color: HOME_LABEL,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  homeRankHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 8,
+  },
+  homeRankTitleMain: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 24,
+    lineHeight: 28,
+    color: HOME_PRIMARY,
+    letterSpacing: -0.45,
+  },
+  homeRankStreakChip: {
+    flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: HOME_RANK_STREAK_SURFACE,
+    borderWidth: 1,
+    borderColor: HOME_RANK_STREAK_BORDER,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  homeRankStreakChipText: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 12,
+    lineHeight: 16,
+    color: HOME_PRIMARY,
+    fontVariant: ['tabular-nums'],
+  },
+  homeRankSubline: {
     fontFamily: unrotFonts.interRegular,
     fontSize: 13,
     lineHeight: 19,
-    color: HOME_LABEL,
-    maxWidth: 320,
+    color: HOME_SECONDARY,
+    marginBottom: 16,
+    opacity: 1,
+  },
+  homeRankXpTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(10, 10, 12, 0.08)',
+    overflow: 'hidden',
+  },
+  homeRankXpFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: HOME_PRIMARY,
+  },
+  homeRankMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    gap: 12,
+  },
+  homeRankMetaLeft: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 12,
+    lineHeight: 16,
+    color: HOME_SECONDARY,
+    fontVariant: ['tabular-nums'],
+    opacity: 0.92,
+  },
+  homeRankMetaRight: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 10,
+    letterSpacing: 0.8,
+    color: HOME_PRIMARY,
+    fontVariant: ['tabular-nums'],
+    opacity: 0.45,
+  },
+  heroSoftOuterWrap: {
+    alignSelf: 'stretch',
+    borderRadius: HOME_RADIUS,
+    overflow: 'hidden',
+    marginBottom: HERO_TO_METRICS_GAP,
+    borderWidth: 1,
+    borderColor: HOME_HERO_BORDER,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.06,
+        shadowRadius: 24,
+      },
+      android: { elevation: 4 },
+      default: {},
+    }),
+  },
+  heroGradientPad: {
+    paddingHorizontal: 26,
+    paddingVertical: 26,
+  },
+  heroSubtitle: {
+    marginTop: 16,
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 14,
+    lineHeight: 22,
+    color: HOME_SECONDARY,
+    maxWidth: 360,
+    opacity: 1,
   },
   monoLabel: {
     fontFamily: unrotFonts.monoBold,
     fontSize: HOME_METRIC_LABEL_FONT_SIZE,
     lineHeight: HOME_METRIC_LABEL_LINE_HEIGHT,
-    letterSpacing: 2,
-    color: HOME_SECONDARY,
+    letterSpacing: 2.4,
+    color: HOME_LABEL,
     marginBottom: 12,
+    opacity: 1,
   },
-  /** Reclaimed value — same Inter Light 34/40 as Moments / Screen time (inverted on dark card). */
+  /** Reclaimed time — largest numeric on home */
   heroMetricValue: {
     fontFamily: unrotFonts.interLight,
-    fontSize: 34,
-    lineHeight: 40,
-    color: HOME_PURE_WHITE,
+    fontSize: 38,
+    lineHeight: 44,
+    color: HOME_PRIMARY,
     fontVariant: ['tabular-nums'],
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
   heroMetricStack: {
     position: 'relative',
@@ -205,11 +370,11 @@ const homeStyles = StyleSheet.create({
   },
   heroMetricGlowText: {
     fontFamily: unrotFonts.interLight,
-    fontSize: 34,
-    lineHeight: 40,
-    color: HOME_PURE_WHITE,
+    fontSize: 38,
+    lineHeight: 44,
+    color: HOME_PRIMARY,
     fontVariant: ['tabular-nums'],
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
     textShadowColor: 'rgba(255, 255, 255, 0.9)',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 16,
@@ -218,49 +383,78 @@ const homeStyles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'stretch',
     alignSelf: 'stretch',
-    gap: 16,
+    gap: 12,
     marginBottom: 0,
   },
   metricBoxBase: {
     flex: 1,
     minWidth: 0,
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+  },
+  metricTileShellScreen: {
+    flex: 1,
+    minWidth: 0,
     borderRadius: HOME_RADIUS,
-    paddingHorizontal: 18,
-    paddingVertical: 22,
-  },
-  metricTileScreenTime: {
-    backgroundColor: HOME_SCREEN_TIME_TILE_BG,
-  },
-  metricTileMoments: {
-    backgroundColor: HOME_PURE_WHITE,
+    overflow: 'hidden',
     borderWidth: 1,
-    borderColor: HOME_METRIC_TILE_BORDER,
+    borderColor: HOME_METRIC_SCREEN_BORDER,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.05,
+        shadowRadius: 18,
+      },
+      android: { elevation: 3 },
+      default: {},
+    }),
+  },
+  metricTileShellMoments: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: HOME_RADIUS,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: HOME_METRIC_MOMENTS_BORDER,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.05,
+        shadowRadius: 18,
+      },
+      android: { elevation: 3 },
+      default: {},
+    }),
   },
   monoLabelScreenTime: {
     fontFamily: unrotFonts.monoBold,
     fontSize: HOME_TILE_LABEL_FONT_SIZE,
     lineHeight: HOME_TILE_LABEL_LINE_HEIGHT,
-    letterSpacing: 2,
+    letterSpacing: 2.2,
     color: HOME_LABEL,
     textTransform: 'uppercase',
     marginBottom: 8,
+    opacity: 1,
   },
   monoLabelMuted: {
     fontFamily: unrotFonts.monoBold,
     fontSize: HOME_TILE_LABEL_FONT_SIZE,
     lineHeight: HOME_TILE_LABEL_LINE_HEIGHT,
-    letterSpacing: 2,
-    color: HOME_SECONDARY,
+    letterSpacing: 2.2,
+    color: HOME_LABEL,
     textTransform: 'uppercase',
     marginBottom: 8,
+    opacity: 1,
   },
   metricStat: {
     fontFamily: unrotFonts.interLight,
-    fontSize: 34,
-    lineHeight: 40,
+    fontSize: 32,
+    lineHeight: 38,
     color: HOME_PRIMARY,
     fontVariant: ['tabular-nums'],
-    letterSpacing: -0.5,
+    letterSpacing: -0.55,
   },
   metricStatUnit: {
     fontFamily: unrotFonts.interLight,
@@ -273,79 +467,107 @@ const homeStyles = StyleSheet.create({
     fontFamily: unrotFonts.interRegular,
     fontSize: 12,
     lineHeight: 17,
-    color: HOME_SECONDARY,
+    color: HOME_LABEL,
+    opacity: 1,
   },
   insightOuter: {
-    marginTop: METRICS_TO_INSIGHT_GAP,
-    marginBottom: HOME_SECTION_GAP,
+    marginTop: METRICS_TO_DANGER_GAP,
+    marginBottom: 0,
     alignSelf: 'stretch',
   },
-  insightBody: {
-    fontFamily: unrotFonts.interLight,
-    fontSize: 16,
-    lineHeight: 27,
-    color: HOME_INSIGHT_TEXT,
-    letterSpacing: -0.05,
-    textAlign: 'left',
+  insightCardShell: {
     alignSelf: 'stretch',
+    borderRadius: HOME_RADIUS,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: HOME_CARD_BORDER,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.05,
+        shadowRadius: 18,
+      },
+      android: { elevation: 3 },
+      default: {},
+    }),
+  },
+  insightGradientPad: {
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+  },
+  /** Slightly under metricStat (32) so the window string fits the card calmly */
+  insightDangerTime: {
+    fontFamily: unrotFonts.interLight,
+    fontSize: 29,
+    lineHeight: 35,
+    color: HOME_PRIMARY,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.5,
+  },
+  insightTimePlaceholder: {
+    color: HOME_SECONDARY,
+    opacity: 0.55,
+  },
+  insightFooterCaption: {
+    marginTop: 8,
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 12,
+    lineHeight: 17,
+    color: HOME_LABEL,
+    opacity: 1,
   },
   logRitualAnchor: {
     marginTop: LOG_SECTION_TOP_MARGIN,
     flexGrow: 1,
     justifyContent: 'flex-end',
+    alignItems: 'center',
     alignSelf: 'stretch',
     minHeight: LOG_ANCHOR_MIN_HEIGHT,
+    backgroundColor: HOME_CANVAS_BG,
   },
-  logHit: {
-    alignSelf: 'stretch',
-  },
-  logRitualSurface: {
-    flexDirection: 'row',
+  logFabHit: {
     alignItems: 'center',
-    alignSelf: 'stretch',
-    paddingVertical: 14,
-    borderRadius: 16,
-    backgroundColor: 'rgba(17, 17, 17, 0.04)',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    backgroundColor: HOME_CANVAS_BG,
   },
-  logBarColumn: {
-    alignItems: 'center',
-    marginRight: 14,
-    width: Math.max(LOG_ACCENT_BAR_W, LOG_PENDING_DOT_SIZE + 2),
-  },
-  logPendingDotSlot: {
-    height: 10,
-    justifyContent: 'flex-end',
-    marginBottom: 5,
+  logFabOuter: {
+    width: LOG_FAB_SIZE,
+    height: LOG_FAB_SIZE,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  logPendingDot: {
-    width: LOG_PENDING_DOT_SIZE,
-    height: LOG_PENDING_DOT_SIZE,
-    borderRadius: LOG_PENDING_DOT_SIZE / 2,
-    backgroundColor: LOG_TRIGGER_INK,
-  },
-  logAccentBar: {
-    width: LOG_ACCENT_BAR_W,
-    height: LOG_ACCENT_BAR_H,
-    backgroundColor: LOG_TRIGGER_INK,
-  },
-  logTitleRow: {
-    flexDirection: 'row',
+  logFabRingLayer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
     alignItems: 'center',
-    flexShrink: 1,
+  },
+  logFabInnerDisc: {
+    width: LOG_INNER_DISC,
+    height: LOG_INNER_DISC,
+    borderRadius: LOG_INNER_DISC / 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: HOME_PURE_WHITE,
+    borderWidth: 1,
+    borderColor: HOME_CARD_BORDER,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.07,
+        shadowRadius: 14,
+      },
+      android: { elevation: 3 },
+      default: {},
+    }),
   },
   logTriggerTitle: {
     fontFamily: unrotFonts.monoBold,
     fontSize: 11,
-    letterSpacing: 0.6,
+    letterSpacing: 1.1,
     color: LOG_TRIGGER_INK,
-  },
-  logDoneCheck: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: 11,
-    letterSpacing: 0.2,
-    color: HOME_SECONDARY,
-    marginLeft: 6,
   },
   refreshRitualLine: {
     width: REFRESH_LINE_W,
@@ -418,19 +640,97 @@ function HomeTopNav({
   );
 }
 
+function HomeRankStrip({
+  rankUi,
+  onOpenRank,
+}: {
+  rankUi: RankUiSnapshot;
+  onOpenRank: () => void;
+}) {
+  const streakLabel = rankUi.streak === 1 ? 'day' : 'days';
+  const pct = Math.round(rankUi.progress01 * 100);
+  const tierSpan = rankUi.nextRank ? rankUi.nextRank.minXp - rankUi.rank.minXp : 1;
+  const xpIntoTier = Math.max(0, rankUi.xp - rankUi.rank.minXp);
+  const subline =
+    rankUi.nextRank != null
+      ? `Next rank · ${rankUi.nextRank.title}`
+      : `Peak rank · ${rankUi.xp.toLocaleString()} XP earned`;
+  const metaLeft = rankUi.nextRank
+    ? `${xpIntoTier} / ${tierSpan} XP this tier`
+    : `${rankUi.xp.toLocaleString()} XP total`;
+
+  return (
+    <Pressable
+      onPress={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onOpenRank();
+      }}
+      style={({ pressed }) => [
+        homeStyles.homeRankStripOuter,
+        pressed && homeStyles.homeRankStripPressed,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`Rank ${rankUi.rank.title}. Streak ${rankUi.streak} ${streakLabel}. ${pct} percent toward next rank. ${metaLeft}. Open details.`}
+      android_ripple={{ color: 'rgba(42, 37, 32, 0.08)' }}
+    >
+      <LinearGradient
+        colors={[...HOME_RANK_GRADIENT]}
+        locations={[...HOME_RANK_GRADIENT_LOCATIONS]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={homeStyles.homeRankGradientPad}
+      >
+        <Text style={homeStyles.homeRankKickerLite}>Rank</Text>
+        <View style={homeStyles.homeRankHeaderRow}>
+          <Text style={homeStyles.homeRankTitleMain} numberOfLines={1}>
+            {rankUi.rank.title}
+          </Text>
+          <View style={homeStyles.homeRankStreakChip} importantForAccessibility="no">
+            <Text style={homeStyles.homeRankStreakChipText}>
+              🔥 {rankUi.streak} {streakLabel}
+            </Text>
+          </View>
+        </View>
+        <Text style={homeStyles.homeRankSubline} numberOfLines={2}>
+          {subline}
+        </Text>
+        <View style={homeStyles.homeRankXpTrack} importantForAccessibility="no">
+          <View
+            style={[
+              homeStyles.homeRankXpFill,
+              { width: `${Math.round(rankUi.progress01 * 10000) / 100}%` },
+            ]}
+          />
+        </View>
+        <View style={homeStyles.homeRankMetaRow} importantForAccessibility="no">
+          <Text style={homeStyles.homeRankMetaLeft} numberOfLines={1}>
+            {metaLeft}
+          </Text>
+          <Text style={homeStyles.homeRankMetaRight}>{rankUi.nextRank ? `${pct}%` : 'MAX'}</Text>
+        </View>
+      </LinearGradient>
+    </Pressable>
+  );
+}
+
 function HomeTopSection({
   homeDateLine,
   onOpenJournal,
   onOpenSettings,
+  rankUi,
+  onOpenRank,
 }: {
   homeDateLine: string;
   onOpenJournal: () => void;
   onOpenSettings: () => void;
+  rankUi: RankUiSnapshot;
+  onOpenRank: () => void;
 }) {
   return (
     <View style={homeStyles.topSectionOpen}>
       <HomeTopNav onOpenJournal={onOpenJournal} onOpenSettings={onOpenSettings} />
       <Text style={homeStyles.homeDate}>{homeDateLine}</Text>
+      <HomeRankStrip rankUi={rankUi} onOpenRank={onOpenRank} />
     </View>
   );
 }
@@ -535,7 +835,7 @@ function HomeHeroSection({
 
   return (
     <View
-      style={homeStyles.heroSoftOuter}
+      style={homeStyles.heroSoftOuterWrap}
       accessible
       accessibilityRole="summary"
       accessibilityLabel={reclaimedHeroAccessibilityLabel(
@@ -544,28 +844,38 @@ function HomeHeroSection({
         contextualLine,
       )}
     >
-      <Text style={homeStyles.monoLabel}>Reclaimed Hours</Text>
-      <Animated.View style={{ transform: [{ scale }] }}>
-        <View style={homeStyles.heroMetricStack}>
-          <Text style={homeStyles.heroMetricValue} importantForAccessibility="no">
-            {shown}
-          </Text>
-          <Animated.View
-            style={[homeStyles.heroMetricGlowLayer, { opacity: refreshGlow }]}
-            pointerEvents="none"
-            importantForAccessibility="no"
-          >
-            <Text style={homeStyles.heroMetricGlowText} importantForAccessibility="no">
+      <LinearGradient
+        colors={[...HOME_HERO_GRADIENT]}
+        locations={[...HOME_HERO_GRADIENT_LOCATIONS]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={homeStyles.heroGradientPad}
+      >
+        <Text style={homeStyles.monoLabel} numberOfLines={2}>
+          Reclaimed Time This Week
+        </Text>
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <View style={homeStyles.heroMetricStack}>
+            <Text style={homeStyles.heroMetricValue} importantForAccessibility="no">
               {shown}
             </Text>
-          </Animated.View>
-        </View>
-      </Animated.View>
-      {contextualLine ? (
-        <Text style={homeStyles.heroSubtitle} importantForAccessibility="no">
-          {contextualLine}
-        </Text>
-      ) : null}
+            <Animated.View
+              style={[homeStyles.heroMetricGlowLayer, { opacity: refreshGlow }]}
+              pointerEvents="none"
+              importantForAccessibility="no"
+            >
+              <Text style={homeStyles.heroMetricGlowText} importantForAccessibility="no">
+                {shown}
+              </Text>
+            </Animated.View>
+          </View>
+        </Animated.View>
+        {contextualLine ? (
+          <Text style={homeStyles.heroSubtitle} importantForAccessibility="no">
+            {contextualLine}
+          </Text>
+        ) : null}
+      </LinearGradient>
     </View>
   );
 }
@@ -641,53 +951,68 @@ function HomeMetricsBand({
   const momentsA11y = `Reclaimed moments today, ${momentsCount}`;
   return (
     <View style={homeStyles.metricsSplitRow}>
-      <View
-        style={[homeStyles.metricBoxBase, homeStyles.metricTileScreenTime]}
-        accessible
-        accessibilityRole="text"
-        accessibilityLabel={screenA11y}
-      >
-        <Text style={homeStyles.monoLabelScreenTime} importantForAccessibility="no">
-          SCREEN TIME
-        </Text>
-        <Text style={homeStyles.metricStat} importantForAccessibility="no">
-          {screenHrsDisplay}
-          {screenTimeNeedsUnitSuffix ? <Text style={homeStyles.metricStatUnit}> h</Text> : null}
-        </Text>
-        <Text style={homeStyles.metricCaption} importantForAccessibility="no">
-          Today
-        </Text>
-      </View>
-      <View
-        style={[homeStyles.metricBoxBase, homeStyles.metricTileMoments]}
-        accessible
-        accessibilityRole="text"
-        accessibilityLabel={momentsA11y}
-      >
-        <Text style={homeStyles.monoLabelMuted} importantForAccessibility="no">
-          MOMENTS
-        </Text>
-        <Animated.View style={{ transform: [{ scale: momentsScale }] }}>
-          <Text style={homeStyles.metricStat} importantForAccessibility="no">
-            {String(shownMoments)}
+      <View style={homeStyles.metricTileShellScreen} accessible accessibilityRole="text" accessibilityLabel={screenA11y}>
+        <LinearGradient
+          colors={[...HOME_METRIC_SCREEN_GRADIENT]}
+          locations={[...HOME_METRIC_SCREEN_GRADIENT_LOCATIONS]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={homeStyles.metricBoxBase}
+        >
+          <Text style={homeStyles.monoLabelScreenTime} importantForAccessibility="no">
+            SCREEN TIME
           </Text>
-        </Animated.View>
-        <Text style={homeStyles.metricCaption} importantForAccessibility="no">
-          Reclaimed today
-        </Text>
+          <Text style={homeStyles.metricStat} importantForAccessibility="no">
+            {screenHrsDisplay}
+            {screenTimeNeedsUnitSuffix ? <Text style={homeStyles.metricStatUnit}> h</Text> : null}
+          </Text>
+          <Text style={homeStyles.metricCaption} importantForAccessibility="no">
+            Today
+          </Text>
+        </LinearGradient>
+      </View>
+      <View style={homeStyles.metricTileShellMoments} accessible accessibilityRole="text" accessibilityLabel={momentsA11y}>
+        <LinearGradient
+          colors={[...HOME_METRIC_MOMENTS_GRADIENT]}
+          locations={[...HOME_METRIC_MOMENTS_GRADIENT_LOCATIONS]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={homeStyles.metricBoxBase}
+        >
+          <Text style={homeStyles.monoLabelMuted} importantForAccessibility="no">
+            MOMENTS
+          </Text>
+          <Animated.View style={{ transform: [{ scale: momentsScale }] }}>
+            <Text style={homeStyles.metricStat} importantForAccessibility="no">
+              {String(shownMoments)}
+            </Text>
+          </Animated.View>
+          <Text style={homeStyles.metricCaption} importantForAccessibility="no">
+            Reclaimed today
+          </Text>
+        </LinearGradient>
       </View>
     </View>
   );
 }
 
 function HomeInsight({
-  dangerZoneLine,
+  insight,
   refreshDelightNonce,
 }: {
-  dangerZoneLine: string;
+  insight: DangerZoneInsight | null;
   refreshDelightNonce: number;
 }) {
   const pulse = useRef(new Animated.Value(1)).current;
+  const timeLine = insight != null ? formatHourRangeAmPm(insight.startHour) : '—';
+  const bottomCaption =
+    insight != null
+      ? 'You are more likely to rot at this time.'
+      : formatEditorialLuxuryDangerLine(null);
+  const accessibilityLabel =
+    insight != null
+      ? `Danger zone. ${timeLine}. You are more likely to rot at this time.`
+      : `Danger zone. ${bottomCaption}`;
 
   useEffect(() => {
     if (refreshDelightNonce < 1) return;
@@ -709,12 +1034,40 @@ function HomeInsight({
   }, [refreshDelightNonce, pulse]);
 
   return (
-    <View style={homeStyles.insightOuter} accessible accessibilityRole="text" accessibilityLabel={dangerZoneLine}>
-      <Animated.View style={{ opacity: pulse }}>
-        <Text style={homeStyles.insightBody} importantForAccessibility="no">
-          {dangerZoneLine}
-        </Text>
-      </Animated.View>
+    <View
+      style={homeStyles.insightOuter}
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={accessibilityLabel}
+    >
+      <View style={homeStyles.insightCardShell}>
+        <Animated.View style={{ opacity: pulse }}>
+          <LinearGradient
+            colors={[...HOME_CARD_GRADIENT]}
+            locations={[...HOME_CARD_GRADIENT_LOCATIONS]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={homeStyles.insightGradientPad}
+          >
+            <Text style={homeStyles.monoLabelScreenTime} importantForAccessibility="no">
+              DANGER ZONE
+            </Text>
+            <Text
+              style={[
+                homeStyles.insightDangerTime,
+                insight == null ? homeStyles.insightTimePlaceholder : null,
+              ]}
+              importantForAccessibility="no"
+              numberOfLines={2}
+            >
+              {timeLine}
+            </Text>
+            <Text style={homeStyles.insightFooterCaption} importantForAccessibility="no">
+              {bottomCaption}
+            </Text>
+          </LinearGradient>
+        </Animated.View>
+      </View>
     </View>
   );
 }
@@ -726,55 +1079,125 @@ function HomeLogFooter({
   loggedToday: boolean;
   onPress: () => void;
 }) {
-  const padH = useRef(new Animated.Value(LOG_RITUAL_PAD_H_REST)).current;
+  const ringProgress = useRef(new Animated.Value(0)).current;
+  const fabScale = useRef(new Animated.Value(1)).current;
+  const ringAnimRef = useRef<Animated.CompositeAnimation | null>(null);
+  const screenReaderOnRef = useRef(false);
 
-  const expand = () => {
-    Animated.spring(padH, {
-      toValue: LOG_RITUAL_PAD_H_PRESS,
+  useEffect(() => {
+    void AccessibilityInfo.isScreenReaderEnabled().then((on) => {
+      screenReaderOnRef.current = on;
+    });
+    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', (on) => {
+      screenReaderOnRef.current = on;
+    });
+    return () => sub.remove();
+  }, []);
+
+  const strokeDashoffset = ringProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [LOG_RING_C, 0],
+  });
+
+  const cx = LOG_FAB_SIZE / 2;
+  const ringRotate = `rotate(-90 ${cx} ${cx})`;
+
+  const resetRing = (duration = LOG_RING_RESET_MS) => {
+    ringAnimRef.current?.stop();
+    ringAnimRef.current = null;
+    Animated.timing(ringProgress, {
+      toValue: 0,
+      duration,
+      easing: Easing.out(Easing.quad),
       useNativeDriver: false,
-      friction: 5,
-      tension: 300,
     }).start();
   };
 
-  const contract = () => {
-    Animated.spring(padH, {
-      toValue: LOG_RITUAL_PAD_H_REST,
-      useNativeDriver: false,
-      friction: 6,
-      tension: 200,
+  const onPressIn = () => {
+    ringAnimRef.current?.stop();
+    ringProgress.setValue(0);
+    Animated.spring(fabScale, {
+      toValue: 0.97,
+      friction: 7,
+      tension: 480,
+      useNativeDriver: true,
     }).start();
+    ringAnimRef.current = Animated.timing(ringProgress, {
+      toValue: 1,
+      duration: LOG_RING_FILL_MS,
+      easing: Easing.linear,
+      useNativeDriver: false,
+    });
+    ringAnimRef.current.start();
+  };
+
+  const onPressOut = () => {
+    ringAnimRef.current?.stop();
+    ringAnimRef.current = null;
+    Animated.spring(fabScale, {
+      toValue: 1,
+      friction: 5,
+      tension: 320,
+      useNativeDriver: true,
+    }).start();
+    ringProgress.stopAnimation((value) => {
+      if (value >= 0.93) {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        onPress();
+        resetRing(160);
+      } else {
+        resetRing(220);
+      }
+    });
+  };
+
+  const handleAccessibilityPress = () => {
+    if (!screenReaderOnRef.current) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onPress();
   };
 
   return (
     <Pressable
-      onPress={() => {
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        onPress();
-      }}
-      onPressIn={expand}
-      onPressOut={contract}
-      hitSlop={{ top: 12, bottom: 12, left: 10, right: 10 }}
-      style={homeStyles.logHit}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      onPress={handleAccessibilityPress}
+      hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+      style={homeStyles.logFabHit}
       accessibilityRole="button"
       accessibilityLabel={
         loggedToday ? 'Log reflective entry. You have already logged today' : 'Log reflective entry. No log yet today'
       }
+      accessibilityHint="Press and hold until the ring completes, then release to open log."
+      android_ripple={{ color: LOG_RING_ACCENT_DIM, borderless: true, radius: Math.round(LOG_FAB_SIZE / 2) }}
     >
-      <Animated.View style={[homeStyles.logRitualSurface, { paddingHorizontal: padH }]}>
-        <View style={homeStyles.logBarColumn}>
-          <View style={homeStyles.logPendingDotSlot} importantForAccessibility="no">
-            {!loggedToday ? <View style={homeStyles.logPendingDot} /> : null}
-          </View>
-          <View style={homeStyles.logAccentBar} importantForAccessibility="no" />
+      <Animated.View style={[homeStyles.logFabOuter, { transform: [{ scale: fabScale }] }]}>
+        <View style={homeStyles.logFabRingLayer} importantForAccessibility="no">
+          <Svg width={LOG_FAB_SIZE} height={LOG_FAB_SIZE}>
+            <Circle
+              cx={cx}
+              cy={cx}
+              r={LOG_RING_R}
+              stroke={LOG_RING_TRACK}
+              strokeWidth={LOG_RING_STROKE}
+              fill="none"
+            />
+            <AnimatedCircle
+              cx={cx}
+              cy={cx}
+              r={LOG_RING_R}
+              stroke={LOG_RING_ACCENT}
+              strokeWidth={LOG_RING_STROKE}
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={`${LOG_RING_C} ${LOG_RING_C}`}
+              strokeDashoffset={strokeDashoffset}
+              transform={ringRotate}
+            />
+          </Svg>
         </View>
-        <View style={homeStyles.logTitleRow}>
+        <View style={homeStyles.logFabInnerDisc}>
           <Text style={homeStyles.logTriggerTitle}>LOG</Text>
-          {loggedToday ? (
-            <Text style={homeStyles.logDoneCheck} importantForAccessibility="no">
-              ✓
-            </Text>
-          ) : null}
         </View>
       </Animated.View>
     </Pressable>
@@ -784,6 +1207,7 @@ function HomeLogFooter({
 type Props = {
   statsTick: number;
   onOpenSettings: () => void;
+  onOpenRank: () => void;
   onStartReflectiveLog: () => void;
 };
 
@@ -863,17 +1287,18 @@ function JournalEntryRow({ entry }: { entry: LogEntry }) {
   );
 }
 
-export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLog }: Props) {
+export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStartReflectiveLog }: Props) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const [view, setView] = useState<'home' | 'journal'>('home');
-  /** Bumps when returning to home so reclaimed hours + moments count-ups replay. */
+  /** Bumps when returning to home so reclaimed time + moments count-ups replay. */
   const [homeCountAnimNonce, setHomeCountAnimNonce] = useState(1);
   const prevViewRef = useRef(view);
   const [analytics, setAnalytics] = useState<LogEntry[]>([]);
   const [reclaimedSnapshot, setReclaimedSnapshot] =
     useState<ReclaimedFocusSnapshot | null>(null);
   const [momentsCount, setMomentsCount] = useState(0);
+  const [rankUi, setRankUi] = useState<RankUiSnapshot>(() => toRankUiSnapshot(DEFAULT_RANK_STATE));
   const [homeRefreshing, setHomeRefreshing] = useState(false);
   const [refreshDelightNonce, setRefreshDelightNonce] = useState(0);
 
@@ -982,9 +1407,12 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
       getReclaimedFocusSnapshot(),
       getReclaimedMomentsToday(),
     ]);
+    await maybeAwardDailyScreenBonus(focusSnap.currentDailyUsageMinutes, focusSnap.screenDataAuthoritative);
+    const rankSnap = toRankUiSnapshot(await loadRankState());
     setAnalytics(all);
     setReclaimedSnapshot(focusSnap);
     setMomentsCount(moments);
+    setRankUi(rankSnap);
   }, []);
 
   const onHomeRefresh = useCallback(async () => {
@@ -1013,11 +1441,6 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
   );
 
   const dangerInsight = useMemo(() => computeDangerZoneInsight(analytics), [analytics]);
-
-  const dangerZoneLine = useMemo(
-    () => formatEditorialLuxuryDangerLineWithFeeling(dangerInsight),
-    [dangerInsight],
-  );
 
   const screenHrsDisplay = useMemo(() => {
     if (reclaimedSnapshot == null || !reclaimedSnapshot.screenDataAuthoritative) return ZERO_H_M;
@@ -1130,11 +1553,13 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
           >
             <View style={styles.fill}>
               <ScrollView
-                style={styles.scroll}
+                style={[styles.scroll, { backgroundColor: HOME_CANVAS_BG }]}
                 contentContainerStyle={[
                   homeStyles.column,
                   {
-                    paddingTop: insets.top + 16,
+                    flexGrow: 1,
+                    backgroundColor: HOME_CANVAS_BG,
+                    paddingTop: insets.top + 18,
                     paddingBottom: Math.max(insets.bottom, 28) + LOG_SCROLL_BOTTOM_COMFORT,
                     paddingHorizontal: HOME_PAGE_PAD_H,
                   },
@@ -1145,9 +1570,12 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
                   <RefreshControl
                     refreshing={homeRefreshing}
                     onRefresh={onHomeRefresh}
-                    tintColor={HOME_PURE_WHITE}
+                    tintColor={HOME_PRIMARY}
                     {...(Platform.OS === 'android'
-                      ? { colors: [HOME_PURE_WHITE], progressBackgroundColor: HOME_PURE_WHITE }
+                      ? {
+                          colors: [HOME_PRIMARY],
+                          progressBackgroundColor: HOME_CANVAS_BG,
+                        }
                       : {})}
                   />
                 }
@@ -1157,6 +1585,8 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
                     homeDateLine={homeDateLine}
                     onOpenJournal={openJournal}
                     onOpenSettings={onOpenSettings}
+                    rankUi={rankUi}
+                    onOpenRank={onOpenRank}
                   />
                 </Animated.View>
 
@@ -1181,7 +1611,7 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
                 </Animated.View>
 
                 <Animated.View style={{ opacity: homeSegDanger }}>
-                  <HomeInsight dangerZoneLine={dangerZoneLine} refreshDelightNonce={refreshDelightNonce} />
+                  <HomeInsight insight={dangerInsight} refreshDelightNonce={refreshDelightNonce} />
                 </Animated.View>
 
                 <View style={[homeStyles.logRitualAnchor, { minHeight: logAnchorMinHeight }]}>
@@ -1234,7 +1664,7 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
           >
             <View style={styles.journalBackRow}>
               <Pressable onPress={closeJournal} hitSlop={12} style={styles.navHit}>
-                <Text style={styles.journalBackSerif}>back</Text>
+                <Text style={styles.journalBackSerif}>Back</Text>
               </Pressable>
             </View>
             <Text style={styles.journalContextDate}>{homeDateLine}</Text>
@@ -1254,7 +1684,7 @@ export function DashboardScreen({ statsTick, onOpenSettings, onStartReflectiveLo
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: unrot.bg,
+    backgroundColor: HOME_CANVAS_BG,
   },
   fill: {
     flex: 1,
@@ -1264,7 +1694,7 @@ const styles = StyleSheet.create({
   },
   scroll: {
     flex: 1,
-    backgroundColor: unrot.bg,
+    backgroundColor: HOME_CANVAS_BG,
   },
   navHit: {
     paddingVertical: 6,

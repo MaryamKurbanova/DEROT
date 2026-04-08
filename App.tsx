@@ -65,6 +65,9 @@ export default function App() {
       require('./src/lib/derotIosScreenTime') as typeof import('./src/lib/derotIosScreenTime');
     recomputeDerotUsageTotals();
     const sub = subscribeDerotUsageRecompute();
+    const { syncNightQuietIfEnabled } =
+      require('./src/lib/nightQuietHoursLock') as typeof import('./src/lib/nightQuietHoursLock');
+    void syncNightQuietIfEnabled();
     return () => sub.remove();
   }, []);
 

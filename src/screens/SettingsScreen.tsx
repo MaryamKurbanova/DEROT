@@ -2,6 +2,7 @@ import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   AppState,
   Platform,
   Pressable,
@@ -13,6 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MonitoredAppIcon } from '../components/MonitoredAppIcon';
+import { SettingsNightQuietPanel } from '../components/SettingsNightQuietPanel';
 import {
   getPassDurationMinutes,
   PASS_DURATION_MINUTES_DEFAULT,
@@ -22,6 +24,13 @@ import {
 } from '../lib/accessPass';
 import { DISTRACTION_APPS } from '../lib/distractionApps';
 import { getMonitoredAppIds, setAppMonitored } from '../lib/monitoredApps';
+import { loadIosDeviceActivity } from '../lib/derotIosScreenTime';
+import {
+  getNightQuietHoursEnabled,
+  setNightQuietHoursEnabled,
+  startNightQuietSchedule,
+  stopNightQuietSchedule,
+} from '../lib/nightQuietHoursLock';
 import { unrot, unrotFonts } from '../theme';
 
 const G = unrot.gutter;
@@ -37,6 +46,9 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
   const insets = useSafeAreaInsets();
   const [monitored, setMonitored] = useState<Set<string>>(new Set());
   const [logEveryMinutes, setLogEveryMinutes] = useState(PASS_DURATION_MINUTES_DEFAULT);
+  const [nightQuietOn, setNightQuietOn] = useState(false);
+  const [nightQuietBusy, setNightQuietBusy] = useState(false);
+  const [, setScreenTimeUiTick] = useState(0);
 
   const refresh = useCallback(async () => {
     const ids = await getMonitoredAppIds();
@@ -51,6 +63,7 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
   useEffect(() => {
     void refresh();
     void refreshPassMinutes();
+    void getNightQuietHoursEnabled().then(setNightQuietOn);
   }, [refresh, refreshPassMinutes]);
 
   useEffect(() => {
@@ -62,6 +75,53 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
     });
     return () => sub.remove();
   }, [refresh, refreshPassMinutes]);
+
+  const bumpScreenTimeUi = useCallback(() => {
+    setScreenTimeUiTick((t) => t + 1);
+  }, []);
+
+  const onNightQuietSwitch = useCallback(
+    async (on: boolean) => {
+      if (Platform.OS !== 'ios') return;
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setNightQuietBusy(true);
+      try {
+        if (on) {
+          const da = loadIosDeviceActivity();
+          if (!da?.isAvailable()) {
+            Alert.alert(
+              'Lock 8 PM – 8 AM',
+              'Screen Time features need a native iOS build with Family Controls (not Expo Go).',
+            );
+            return;
+          }
+          const { AuthorizationStatus, getAuthorizationStatus, requestAuthorization } = da;
+          if (getAuthorizationStatus() !== AuthorizationStatus.approved) {
+            await requestAuthorization('individual');
+          }
+          if (getAuthorizationStatus() !== AuthorizationStatus.approved) {
+            Alert.alert(
+              'Screen Time required',
+              'Allow Screen Time access when iOS asks, then turn night lock on again.',
+            );
+            return;
+          }
+          await startNightQuietSchedule();
+          await setNightQuietHoursEnabled(true);
+          setNightQuietOn(true);
+        } else {
+          stopNightQuietSchedule();
+          await setNightQuietHoursEnabled(false);
+          setNightQuietOn(false);
+        }
+      } catch (e) {
+        Alert.alert('Lock 8 PM – 8 AM', e instanceof Error ? e.message : String(e));
+      } finally {
+        setNightQuietBusy(false);
+      }
+    },
+    [],
+  );
 
   const toggleApp = async (appId: string, on: boolean) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -85,7 +145,7 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
           hitSlop={12}
           style={styles.backHit}
         >
-          <Text style={styles.backSerif}>back</Text>
+          <Text style={styles.backSerif}>Back</Text>
         </Pressable>
       </View>
 
@@ -104,35 +164,29 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
         <Text style={styles.screenTitle}>Settings</Text>
 
         {onReplayOnboarding ? (
-          <>
-            <Text style={[styles.sectionTitle, styles.sectionTitleTight]}>Setup</Text>
-            <Pressable
-              onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                onReplayOnboarding();
-              }}
-              style={styles.onboardingRow}
-              accessibilityRole="button"
-              accessibilityLabel="Walk through setup again"
-            >
-              <Text style={styles.onboardingRowTitle}>Walk through setup again</Text>
-              <Text style={styles.onboardingRowHint}>Replay the intro and baseline questions.</Text>
-            </Pressable>
-          </>
+          <Pressable
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              onReplayOnboarding();
+            }}
+            style={[styles.onboardingRow, styles.blockAfterScreenTitle]}
+            accessibilityRole="button"
+            accessibilityLabel="Replay onboarding"
+          >
+            <Text style={styles.onboardingRowTitle}>Walk through intro again</Text>
+            <Text style={styles.onboardingRowHint}>Replay the intro and baseline questions.</Text>
+          </Pressable>
         ) : null}
 
-        <Text
+        <View
           style={[
-            styles.sectionTitle,
-            onReplayOnboarding ? styles.sectionTitleSpaced : styles.sectionTitleTight,
+            styles.sliderBlock,
+            onReplayOnboarding ? styles.blockAfterOnboarding : styles.blockAfterScreenTitle,
           ]}
         >
-          Reclaimed time
-        </Text>
-        <Text style={styles.logCadenceBody}>
-          After you log, monitored apps stay open for this long before the log returns.
-        </Text>
-        <View style={styles.sliderBlock}>
+          <Text style={styles.sliderCaption}>
+            Apps are unlocked for this long until you complete your log.
+          </Text>
           <Slider
             style={styles.sliderTrack}
             minimumValue={PASS_DURATION_MINUTES_MIN}
@@ -176,6 +230,32 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
             </View>
           );
         })}
+
+        <View style={styles.nightLockBlock}>
+          <SettingsNightQuietPanel nightEnabled={nightQuietOn} onSelectionChanged={bumpScreenTimeUi} />
+        </View>
+
+        <View style={styles.nightSwitchRow} accessibilityRole="none">
+          <View style={styles.appCopy}>
+            <Text style={styles.appName}>Lock 8 PM – 8 AM</Text>
+            <Text style={styles.onboardingRowHint}>
+              {Platform.OS === 'ios'
+                ? 'Requires Screen Time approval and the app picker above.'
+                : 'Available on iPhone with Screen Time.'}
+            </Text>
+          </View>
+          <View style={styles.switchWrap}>
+            <Switch
+              value={nightQuietOn}
+              onValueChange={(v) => void onNightQuietSwitch(v)}
+              disabled={nightQuietBusy || Platform.OS !== 'ios'}
+              accessibilityLabel="Lock apps from 8 PM to 8 AM"
+              trackColor={{ false: unrot.choiceMuted, true: unrot.ink }}
+              thumbColor={Platform.OS === 'android' ? '#FFFFFF' : undefined}
+              ios_backgroundColor={unrot.choiceMuted}
+            />
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
@@ -222,15 +302,11 @@ const styles = StyleSheet.create({
     color: unrot.muted,
     marginBottom: 8,
   },
-  sectionTitleTight: {
-    marginBottom: 8,
+  blockAfterScreenTitle: {
+    marginTop: 8,
   },
-  logCadenceBody: {
-    fontFamily: unrotFonts.heroSerif,
-    fontSize: 14,
-    lineHeight: 22,
-    color: unrot.muted,
-    marginBottom: 16,
+  blockAfterOnboarding: {
+    marginTop: 28,
   },
   sectionTitleSpaced: {
     marginTop: 36,
@@ -238,6 +314,13 @@ const styles = StyleSheet.create({
   },
   sliderBlock: {
     marginBottom: 8,
+  },
+  sliderCaption: {
+    fontFamily: unrotFonts.heroSerif,
+    fontSize: 14,
+    lineHeight: 22,
+    color: unrot.muted,
+    marginBottom: 16,
   },
   sliderTrack: {
     width: '100%',
@@ -298,5 +381,16 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  nightLockBlock: {
+    marginTop: 36,
+  },
+  nightSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(17, 17, 17, 0.12)',
   },
 });
