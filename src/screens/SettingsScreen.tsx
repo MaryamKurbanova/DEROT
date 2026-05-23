@@ -89,10 +89,7 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
         if (on) {
           const da = loadIosDeviceActivity();
           if (!da?.isAvailable()) {
-            Alert.alert(
-              'Lock 8 PM – 8 AM',
-              'Screen Time features need a native iOS build with Family Controls (not Expo Go).',
-            );
+            Alert.alert('Lock 8 PM – 8 AM', 'Screen Time is not available in this build.');
             return;
           }
           const { AuthorizationStatus, getAuthorizationStatus, requestAuthorization } = da;
@@ -174,7 +171,6 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
             accessibilityLabel="Replay onboarding"
           >
             <Text style={styles.onboardingRowTitle}>Walk through intro again</Text>
-            <Text style={styles.onboardingRowHint}>Replay the intro and baseline questions.</Text>
           </Pressable>
         ) : null}
 

@@ -52,11 +52,7 @@ export function SettingsNightQuietPanel({ nightEnabled, onSelectionChanged }: Pr
   }, [nightEnabled, onSelectionChanged]);
 
   if (!isAvailable()) {
-    return (
-      <Text style={styles.note}>
-        Connect a native iOS build with Family Controls to use night lock.
-      </Text>
-    );
+    return null;
   }
 
   const approved = getAuthorizationStatus() === AuthorizationStatus.approved;
@@ -102,13 +98,6 @@ export function SettingsNightQuietPanel({ nightEnabled, onSelectionChanged }: Pr
 const styles = StyleSheet.create({
   wrap: {
     marginTop: 4,
-    marginBottom: 8,
-  },
-  note: {
-    fontFamily: unrotFonts.heroSerif,
-    fontSize: 13,
-    lineHeight: 20,
-    color: unrot.muted,
     marginBottom: 8,
   },
   subLabel: {

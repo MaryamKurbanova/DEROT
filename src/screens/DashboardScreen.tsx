@@ -1268,21 +1268,19 @@ function JournalEntryRow({ entry }: { entry: LogEntry }) {
   const moodLine = journalMoodLine(entry.state);
 
   return (
-    <View style={styles.journalEntry}>
-      <View style={styles.journalEntryRow}>
+    <View style={styles.journalEntryCard}>
+      <View style={styles.journalEntryTopRow}>
+        <Text style={styles.journalMoodChip}>{moodLine}</Text>
         <Text style={styles.journalTime}>{formatJournalTime(entry.timestamp)}</Text>
-        <View style={styles.journalEntryRight}>
-          <Text style={styles.journalIntent} selectable>
-            {moodLine}
-            {` · ${headline}`}
-          </Text>
-          {detail ? (
-            <Text style={styles.journalIntentDetail} selectable>
-              {detail}
-            </Text>
-          ) : null}
-        </View>
       </View>
+      <Text style={styles.journalIntentHeadline} selectable>
+        {headline}
+      </Text>
+      {detail ? (
+        <Text style={styles.journalIntentDetail} selectable>
+          {detail}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -1501,6 +1499,32 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
     [statsTick],
   );
 
+  const journalSummaryLine = useMemo(() => {
+    const count = journalSorted.length;
+    if (count === 0) return 'No entries yet';
+    if (count === 1) return '1 entry';
+    return `${count} entries`;
+  }, [journalSorted.length]);
+
+  const journalTodayCount = useMemo(() => {
+    const today = dayKey(Date.now());
+    return journalSorted.filter((e) => dayKey(e.timestamp) === today).length;
+  }, [journalSorted]);
+
+  const journalWeekCount = useMemo(() => {
+    const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return journalSorted.filter((e) => e.timestamp >= since).length;
+  }, [journalSorted]);
+
+  const journalDayCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of journalSorted) {
+      const k = dayKey(e.timestamp);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return m;
+  }, [journalSorted]);
+
   const closeJournal = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setView('home');
@@ -1515,12 +1539,14 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
     return (
       <Fragment key={key}>
         {isFirstOfDay ? (
-          <Text
-            style={[styles.journalDayHeading, i > 0 && styles.journalDayHeadingSpaced]}
-            accessibilityRole="header"
-          >
-            {formatJournalDayHeading(e.timestamp)}
-          </Text>
+          <View style={[styles.journalDayHeaderRow, i > 0 && styles.journalDayHeadingSpaced]}>
+            <Text style={styles.journalDayHeading} accessibilityRole="header">
+              {formatJournalDayHeading(e.timestamp)}
+            </Text>
+            <Text style={styles.journalDayCount}>
+              {`${journalDayCounts.get(dk) ?? 0} ${(journalDayCounts.get(dk) ?? 0) === 1 ? 'entry' : 'entries'}`}
+            </Text>
+          </View>
         ) : null}
         <JournalEntryRow entry={e} />
       </Fragment>
@@ -1669,8 +1695,25 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
             </View>
             <Text style={styles.journalContextDate}>{homeDateLine}</Text>
             <Text style={styles.journalScreenTitle}>Journal</Text>
+            <Text style={styles.journalSubline}>{journalSummaryLine}</Text>
+            <View style={styles.journalStatsRow}>
+              <View style={styles.journalStatChip}>
+                <Text style={styles.journalStatLabel}>Today</Text>
+                <Text style={styles.journalStatValue}>{journalTodayCount}</Text>
+              </View>
+              <View style={styles.journalStatChip}>
+                <Text style={styles.journalStatLabel}>This week</Text>
+                <Text style={styles.journalStatValue}>{journalWeekCount}</Text>
+              </View>
+              <View style={styles.journalStatChip}>
+                <Text style={styles.journalStatLabel}>Total</Text>
+                <Text style={styles.journalStatValue}>{journalSorted.length}</Text>
+              </View>
+            </View>
             {journalSorted.length === 0 ? (
-              <Text style={styles.journalEmpty}>Nothing logged yet.</Text>
+              <View style={styles.journalEmptyCard}>
+                <Text style={styles.journalEmpty}>Nothing logged yet. Hold LOG on home to add one.</Text>
+              </View>
             ) : (
               journalBlocks
             )}
@@ -1703,15 +1746,15 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 16,
   },
-  /** Same calendar string as home date; serif for journal continuity */
+  /** Same type as home `homeDate` (today line under Back) */
   journalContextDate: {
-    fontFamily: unrotFonts.heroSerif,
-    fontSize: 13,
-    lineHeight: 20,
-    color: unrot.muted,
+    fontFamily: unrotFonts.heroSerifItalic,
+    fontSize: 16,
+    lineHeight: 24,
+    color: HOME_PRIMARY,
     marginBottom: 20,
-    letterSpacing: 0.2,
-    opacity: 0.95,
+    letterSpacing: 0.08,
+    opacity: 0.72,
   },
   journalBackSerif: {
     fontFamily: unrotFonts.heroSerif,
@@ -1727,18 +1770,74 @@ const styles = StyleSheet.create({
     fontSize: 42,
     lineHeight: 48,
     color: unrot.ink,
-    marginBottom: 28,
+    marginBottom: 6,
     letterSpacing: -0.5,
   },
-  journalDayHeading: {
-    fontFamily: unrotFonts.heroSerif,
-    fontSize: 15,
+  journalSubline: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 12,
+    lineHeight: 18,
+    color: HOME_LABEL,
+    marginBottom: 24,
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+  },
+  journalStatsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 22,
+  },
+  journalStatChip: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(10, 10, 12, 0.08)',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  journalStatLabel: {
+    fontFamily: unrotFonts.monoBold,
+    fontSize: 8,
+    lineHeight: 12,
+    letterSpacing: 1.1,
+    color: HOME_LABEL,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  journalStatValue: {
+    fontFamily: unrotFonts.interLight,
+    fontSize: 18,
     lineHeight: 22,
-    color: unrot.muted,
-    marginBottom: 20,
+    color: HOME_PRIMARY,
+    fontVariant: ['tabular-nums'],
+  },
+  journalDayHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 14,
+  },
+  journalDayHeading: {
+    fontFamily: unrotFonts.heroSerifItalic,
+    fontSize: 16,
+    lineHeight: 24,
+    color: HOME_PRIMARY,
+    letterSpacing: 0.08,
+    opacity: 0.72,
+  },
+  journalDayCount: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 11,
+    lineHeight: 16,
+    color: HOME_LABEL,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
   journalDayHeadingSpaced: {
-    marginTop: 36,
+    marginTop: 32,
   },
   journalEmpty: {
     fontFamily: unrotFonts.interRegular,
@@ -1746,32 +1845,49 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: unrot.muted,
   },
-  journalEntry: {
-    marginBottom: 32,
+  journalEmptyCard: {
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(10, 10, 12, 0.08)',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
-  journalEntryRow: {
+  journalEntryCard: {
+    marginBottom: 14,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(10, 10, 12, 0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  journalEntryTopRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    gap: 10,
   },
-  journalTime: {
-    width: 56,
-    marginRight: 16,
+  journalMoodChip: {
     fontFamily: unrotFonts.interRegular,
     fontSize: 12,
     lineHeight: 18,
-    color: unrot.muted,
-    paddingTop: 4,
+    color: HOME_SECONDARY,
   },
-  journalEntryRight: {
-    flex: 1,
-    minWidth: 0,
+  journalTime: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 12,
+    lineHeight: 18,
+    color: HOME_SECONDARY,
+    fontVariant: ['tabular-nums'],
   },
-  journalIntent: {
+  journalIntentHeadline: {
     fontFamily: unrotFonts.heroSerif,
     fontSize: 16,
-    lineHeight: 24,
+    lineHeight: 23,
     color: unrot.ink,
-    letterSpacing: -0.15,
+    letterSpacing: -0.14,
   },
   journalIntentDetail: {
     marginTop: 8,
