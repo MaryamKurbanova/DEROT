@@ -17,22 +17,18 @@ struct DerotBarReportConfiguration {
 }
 
 /// Renders today’s usage for the filter your app passes into `DeviceActivityReport` (monitored selection).
-private struct DerotBarReportView: View {
-  let config: DerotBarReportConfiguration
-
-  init(_ config: DerotBarReportConfiguration) {
-    self.config = config
-  }
+struct DerotBarReportView: View {
+  let configuration: DerotBarReportConfiguration
 
   var body: some View {
-    if config.rows.isEmpty {
+    if configuration.rows.isEmpty {
       Text("No activity in this range for your monitored apps.")
         .font(.footnote)
         .foregroundStyle(.secondary)
         .padding()
     } else {
       List {
-        ForEach(config.rows) { row in
+        ForEach(configuration.rows) { row in
           HStack {
             Text(row.title)
             Spacer()
@@ -47,8 +43,13 @@ private struct DerotBarReportView: View {
   }
 }
 
-private struct DerotBarReportScene: DeviceActivityReportScene {
+struct DerotBarReportScene: DeviceActivityReportScene {
   let context: DeviceActivityReport.Context = .derotBar
+  let content: (DerotBarReportConfiguration) -> DerotBarReportView
+
+  init(content: @escaping (DerotBarReportConfiguration) -> DerotBarReportView) {
+    self.content = content
+  }
 
   func makeConfiguration(representing data: DeviceActivityResults<DeviceActivityData>) async -> DerotBarReportConfiguration {
     var rows: [(String, Double)] = []
@@ -75,7 +76,7 @@ private struct DerotBarReportScene: DeviceActivityReportScene {
 struct DerotDeviceActivityReportExtension: DeviceActivityReportExtension {
   var body: some DeviceActivityReportScene {
     DerotBarReportScene { configuration in
-      DerotBarReportView(configuration)
+      DerotBarReportView(configuration: configuration)
     }
   }
 }
