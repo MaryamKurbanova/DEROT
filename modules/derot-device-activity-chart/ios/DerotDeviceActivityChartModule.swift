@@ -41,6 +41,16 @@ private struct DerotReportHost: View {
 
   private var filter: DeviceActivityFilter {
     let day = Calendar.current.dateInterval(of: .day, for: Date())!
+    if #available(iOS 17.0, *) {
+      return DeviceActivityFilter(
+        segment: .daily(during: day),
+        users: .all,
+        devices: .all,
+        applications: selection.applicationTokens,
+        categories: selection.categoryTokens,
+        webDomains: selection.webDomainTokens
+      )
+    }
     return DeviceActivityFilter(
       segment: .daily(during: day),
       devices: .all,
