@@ -1,8 +1,8 @@
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { Animated, AppState, Linking, Platform, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getPassDurationMinutes, shouldShowFocusWallForApp } from '../lib/accessPass';
+import { getPassDurationMinutes, getMonitoredPassUntil, shouldShowFocusWallForApp } from '../lib/accessPass';
 import {
   markBreathPlusLogRitualCompleted,
   shouldRequireBreathingBeforeReflectiveLog,
@@ -12,20 +12,43 @@ import { getInterceptArmed } from '../lib/interceptArmed';
 import {
   getPendingDistractionIdFromNative,
   subscribeDistractionLaunches,
+  syncInterceptArmedToNative,
+  syncMonitoredIdsToNative,
 } from '../lib/interceptBridge';
+import { subscribeScreenTimeReportRefresh } from '../lib/screenTimeReportRefresh';
+import { hydrateHomeSyncedTodayMinutes, loadHomeSyncedTodayMinutes } from '../lib/screenTimeHomeSync';
+import { loadIosDeviceActivity } from '../lib/derotIosScreenTime';
 import { iosEnsureStickyMonitoring, iosStickyReportsAreAuthoritative } from '../lib/iosStickyRotUsage';
 import { getMonitoredAppIds, isAppMonitored } from '../lib/monitoredApps';
+import {
+  ensureMonitoredPassRelockState,
+  scheduleMonitoredPassRelock,
+} from '../lib/monitoredPassExpiry';
+import { syncMonitoredAppShields } from '../lib/monitoredAppShield';
+import { rescheduleSocialLockPassRelockIfActive } from '../lib/socialLockPassSchedule';
 import { awardReflectiveLogXp } from '../lib/rankXp';
 import { incrementReclaimedOnReflectiveLogExit } from '../lib/reclaimedMoments';
 import { recordFocusWallTrigger } from '../lib/rotVelocity';
 import { setLastActiveAppId } from '../lib/usageStats';
 import { registerInterceptWallHandler, requestInterceptWall } from '../lib/wallBridge';
-import { EDITORIAL_FADE_MS, spacing, unrot } from '../theme';
+import { spacing, unrot } from '../theme';
 import { BreathingInterceptModal } from './BreathingInterceptModal';
 import { DashboardScreen } from './DashboardScreen';
 import { FocusWallScreen, type FocusWallPurpose } from './FocusWallScreen';
 import { RankScreen } from './RankScreen';
 import { SettingsScreen } from './SettingsScreen';
+
+function loadScreenTimeReportHost() {
+  if (Platform.OS !== 'ios') return null;
+  try {
+    return require('../components/ScreenTimeReportHost').ScreenTimeReportHost as ComponentType<{
+      enabled?: boolean;
+      refreshToken?: number;
+    }>;
+  } catch {
+    return null;
+  }
+}
 
 function appIdFromUrl(url: string): string | null {
   const q = url.split('?')[1];
@@ -51,11 +74,48 @@ type MainShellProps = {
 
 export function MainShell({ onReplayOnboarding }: MainShellProps) {
   const insets = useSafeAreaInsets();
+  const ScreenTimeReportHost = useMemo(() => loadScreenTimeReportHost(), []);
   const [screen, setScreen] = useState<'dashboard' | 'settings' | 'rank'>('dashboard');
   const [interceptSession, setInterceptSession] = useState<InterceptSession>(null);
   const [statsTick, setStatsTick] = useState(0);
+  const [homeSyncedMinutes, setHomeSyncedMinutes] = useState(0);
   const [passDurationMinutes, setPassDurationMinutes] = useState(10);
-  const shellFade = useRef(new Animated.Value(0)).current;
+  const shellFade = useRef(new Animated.Value(1)).current;
+  const shellDidMountRef = useRef(false);
+  const bumpStatsTick = useCallback(() => {
+    setStatsTick((t) => t + 1);
+    void loadHomeSyncedTodayMinutes().then(setHomeSyncedMinutes);
+  }, []);
+  const [reportRefreshToken, setReportRefreshToken] = useState(0);
+  const bumpReportRefresh = useCallback(() => setReportRefreshToken((t) => t + 1), []);
+
+  useEffect(() => {
+    void (async () => {
+      const ids = await getMonitoredAppIds();
+      await syncMonitoredIdsToNative(ids);
+      await syncInterceptArmedToNative(await getInterceptArmed());
+      const until = await getMonitoredPassUntil();
+      if (until != null && until > Date.now()) {
+        scheduleMonitoredPassRelock(until);
+        await rescheduleSocialLockPassRelockIfActive();
+      } else {
+        await ensureMonitoredPassRelockState();
+      }
+      await syncMonitoredAppShields();
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const da = loadIosDeviceActivity();
+    if (!da?.isAvailable()) return;
+    const sub = da.onDeviceActivityMonitorEvent((payload) => {
+      if (payload.callbackName === 'intervalDidEnd') {
+        void ensureMonitoredPassRelockState();
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     if (screen === 'dashboard') {
@@ -64,10 +124,15 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
   }, [screen]);
 
   useEffect(() => {
-    shellFade.setValue(0);
+    if (!shellDidMountRef.current) {
+      shellDidMountRef.current = true;
+      shellFade.setValue(1);
+      return;
+    }
+    shellFade.setValue(0.97);
     Animated.timing(shellFade, {
       toValue: 1,
-      duration: EDITORIAL_FADE_MS,
+      duration: 280,
       useNativeDriver: true,
     }).start();
   }, [screen, shellFade]);
@@ -118,14 +183,28 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
   }, [considerWall]);
 
   useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    void hydrateHomeSyncedTodayMinutes().then(setHomeSyncedMinutes);
+  }, []);
+
+  useEffect(() => {
     void maybeOpenPendingWall();
     const syncIosSticky = () => {
       if (Platform.OS !== 'ios') return;
+      bumpReportRefresh();
+      void loadHomeSyncedTodayMinutes().then(setHomeSyncedMinutes);
       void (async () => {
         if (await iosStickyReportsAreAuthoritative()) {
           await iosEnsureStickyMonitoring();
-          setStatsTick((t) => t + 1);
         }
+        const until = await getMonitoredPassUntil();
+        if (until != null && until > Date.now()) {
+          scheduleMonitoredPassRelock(until);
+          await rescheduleSocialLockPassRelockIfActive();
+        } else {
+          await ensureMonitoredPassRelockState();
+        }
+        await syncMonitoredAppShields();
       })();
     };
     syncIosSticky();
@@ -136,11 +215,16 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
       }
     });
     return () => sub.remove();
-  }, [maybeOpenPendingWall]);
+  }, [maybeOpenPendingWall, bumpReportRefresh]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    return subscribeScreenTimeReportRefresh(bumpReportRefresh);
+  }, [bumpReportRefresh]);
 
   useEffect(() => {
     const route = (url: string | null) => {
-      if (!url || !url.startsWith('unrot')) return;
+      if (!url || (!url.startsWith('derot') && !url.startsWith('unrot'))) return;
       const id = appIdFromUrl(url);
       if (id) void considerWall(id);
     };
@@ -171,10 +255,14 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
     <>
       <StatusBar style="dark" />
       <View style={[styles.root, { backgroundColor: unrot.bg }]}>
+        {ScreenTimeReportHost ? (
+          <ScreenTimeReportHost enabled refreshToken={reportRefreshToken} />
+        ) : null}
         <Animated.View style={[styles.body, { opacity: shellFade }]}>
           {screen === 'dashboard' ? (
             <DashboardScreen
               statsTick={statsTick}
+              homeSyncedMinutes={homeSyncedMinutes}
               onOpenSettings={() => setScreen('settings')}
               onOpenRank={() => setScreen('rank')}
               onStartReflectiveLog={async () => {
@@ -194,6 +282,7 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
               tabBarInset={bottomInset}
               onGoBack={() => setScreen('dashboard')}
               onReplayOnboarding={onReplayOnboarding}
+              onScreenTimeChanged={bumpStatsTick}
             />
           ) : null}
         </Animated.View>
@@ -209,9 +298,11 @@ export function MainShell({ onReplayOnboarding }: MainShellProps) {
               ? 'You’ve breathed. Now complete your log — then you can open the app.'
               : undefined
           }
-          onInterceptPassGranted={
-            afterBreathLog ? () => void markBreathPlusLogRitualCompleted() : undefined
-          }
+          onInterceptPassGranted={(untilMs) => {
+            scheduleMonitoredPassRelock(untilMs);
+            setStatsTick((t) => t + 1);
+            if (afterBreathLog) void markBreathPlusLogRitualCompleted();
+          }}
           onLogSaved={() => {
             void (async () => {
               await awardReflectiveLogXp();

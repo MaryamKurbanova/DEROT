@@ -5,7 +5,7 @@ const KEY = 'unrot_intercept_armed';
 /**
  * Master switch for the ~60s focus ritual (Dashboard: ACTIVE / PAUSED).
  * When inactive, the exercise wall never opens; monitored-app list in Settings is unchanged.
- * When active, opening a monitored app can show the wall; completing it grants ~1h access for that app.
+ * When active, opening a monitored app can show the wall; completing it unlocks all monitored apps.
  */
 export async function getInterceptArmed(): Promise<boolean> {
   const v = await AsyncStorage.getItem(KEY);

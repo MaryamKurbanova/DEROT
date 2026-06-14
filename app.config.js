@@ -2,7 +2,7 @@
  * Dynamic Expo config. Set APPLE_TEAM_ID for react-native-device-activity (Family Controls).
  *
  * EAS:  eas secret:create --scope project --name APPLE_TEAM_ID --value YOUR_10_CHAR_TEAM_ID
- * Local prebuild:  APPLE_TEAM_ID=XXXXXXXXXX npx expo prebuild --platform ios
+ * Local prebuild:  APPLE_TEAM_ID=XXXXXXXXXX npm run prebuild:ios
  */
 
 module.exports = ({ config }) => {

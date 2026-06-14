@@ -24,9 +24,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AppErrorBoundary } from './src/components/AppErrorBoundary';
 import { getOnboardingComplete } from './src/lib/onboardingStorage';
-import { MainShell } from './src/screens/MainShell';
-import { OnboardingFlow } from './src/screens/OnboardingFlow';
 import { unrot } from './src/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -52,24 +51,60 @@ export default function App() {
   useEffect(() => {
     if (!fontsLoaded) return;
     void (async () => {
-      const done = await getOnboardingComplete();
-      setShowOnboarding(!done);
-      setBootReady(true);
-      await SplashScreen.hideAsync();
+      try {
+        const done = await getOnboardingComplete();
+        setShowOnboarding(!done);
+      } catch (e) {
+        console.warn('getOnboardingComplete', e);
+        setShowOnboarding(true);
+      } finally {
+        setBootReady(true);
+        await SplashScreen.hideAsync().catch(() => undefined);
+      }
     })();
   }, [fontsLoaded]);
 
+  /** Screen Time native APIs throw "runtime not ready" if called during first paint. */
   useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-    const { subscribeDerotUsageRecompute, recomputeDerotUsageTotals } =
-      require('./src/lib/derotIosScreenTime') as typeof import('./src/lib/derotIosScreenTime');
-    recomputeDerotUsageTotals();
-    const sub = subscribeDerotUsageRecompute();
-    const { syncNightQuietIfEnabled } =
-      require('./src/lib/nightQuietHoursLock') as typeof import('./src/lib/nightQuietHoursLock');
-    void syncNightQuietIfEnabled();
-    return () => sub.remove();
-  }, []);
+    if (Platform.OS !== 'ios' || !bootReady || showOnboarding) return;
+    let sub: { remove: () => void } | null = null;
+    let cancelled = false;
+    void (async () => {
+      const waits = [0, 400, 1000, 2500];
+      for (const ms of waits) {
+        if (ms > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, ms));
+        }
+        if (cancelled) return;
+        try {
+          const {
+            loadIosDeviceActivity,
+            recomputeDerotUsageTotals,
+            setScreenTimeRuntimeReady,
+            subscribeDerotUsageRecompute,
+          } = require('./src/lib/derotIosScreenTime') as typeof import('./src/lib/derotIosScreenTime');
+          setScreenTimeRuntimeReady(true);
+          const da = loadIosDeviceActivity();
+          if (!da?.isAvailable()) continue;
+          recomputeDerotUsageTotals();
+          sub = subscribeDerotUsageRecompute();
+          const { syncNightQuietIfEnabled } =
+            require('./src/lib/nightQuietHoursLock') as typeof import('./src/lib/nightQuietHoursLock');
+          void syncNightQuietIfEnabled();
+          const { syncMonitoredAppShields } =
+            require('./src/lib/monitoredAppShield') as typeof import('./src/lib/monitoredAppShield');
+          void syncMonitoredAppShields();
+          return;
+        } catch (e) {
+          console.warn('iosScreenTimeBoot', e);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      sub?.remove();
+    };
+  }, [bootReady, showOnboarding]);
 
   if (!fontsLoaded || !bootReady) {
     return (
@@ -79,23 +114,45 @@ export default function App() {
     );
   }
 
-  return (
-    <SafeAreaProvider>
-      <View style={styles.root}>
-        {showOnboarding ? (
-          <>
-            <StatusBar style="dark" />
-            <OnboardingFlow
-              onDone={() => {
-                setShowOnboarding(false);
-              }}
-            />
-          </>
-        ) : (
-          <MainShell onReplayOnboarding={() => setShowOnboarding(true)} />
-        )}
+  const mainShellModule =
+    (require('./src/screens/MainShell') as Partial<typeof import('./src/screens/MainShell')> | undefined) ?? {};
+  const onboardingModule =
+    (require('./src/screens/OnboardingFlow') as Partial<typeof import('./src/screens/OnboardingFlow')> | undefined) ??
+    {};
+  const MainShellScreen = mainShellModule.MainShell;
+  const OnboardingFlowScreen = onboardingModule.OnboardingFlow;
+
+  if (!MainShellScreen || !OnboardingFlowScreen) {
+    console.error('App screen module load failed', {
+      hasMainShell: Boolean(MainShellScreen),
+      hasOnboardingFlow: Boolean(OnboardingFlowScreen),
+    });
+    return (
+      <View style={styles.boot}>
+        <ActivityIndicator color={unrot.ink} size="large" />
       </View>
-    </SafeAreaProvider>
+    );
+  }
+
+  return (
+    <AppErrorBoundary>
+      <SafeAreaProvider>
+        <View style={styles.root}>
+          {showOnboarding ? (
+            <>
+              <StatusBar style="dark" />
+              <OnboardingFlowScreen
+                onDone={() => {
+                  setShowOnboarding(false);
+                }}
+              />
+            </>
+          ) : (
+            <MainShellScreen onReplayOnboarding={() => setShowOnboarding(true)} />
+          )}
+        </View>
+      </SafeAreaProvider>
+    </AppErrorBoundary>
   );
 }
 

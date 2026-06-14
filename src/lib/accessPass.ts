@@ -1,10 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { DISTRACTION_APPS } from './distractionApps';
 import { notifyAccessPassClearedToNative, notifyAccessPassGrantedToNative } from './interceptBridge';
+import { getMonitoredAppIds } from './monitoredApps';
 
 const SMART_RESET_KEY = 'unrot_smart_reset_enabled';
-/** @deprecated legacy global pass — cleared on first per-app grant */
+/** @deprecated legacy global pass — cleared on first monitored grant */
 const LEGACY_STORAGE_KEY = 'unrot_access_valid_until_ms';
+/** Shared unlock window for all monitored apps after a reflective log. */
+const MONITORED_PASS_UNTIL_KEY = 'unrot_monitored_pass_until_ms';
 const PASS_DURATION_MINUTES_KEY = 'unrot_pass_duration_minutes';
 
 export const PASS_DURATION_MINUTES_MIN = 5;
@@ -70,8 +74,72 @@ export async function isAccessPassActiveForApp(appId: string, at: number = Date.
   return until != null && at < until;
 }
 
+export async function getMonitoredPassUntil(): Promise<number | null> {
+  const raw = await AsyncStorage.getItem(MONITORED_PASS_UNTIL_KEY);
+  if (raw == null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** True while every monitored app shares an active post-log unlock window. */
+export async function isMonitoredPassActive(at: number = Date.now()): Promise<boolean> {
+  const until = await getMonitoredPassUntil();
+  return until != null && at < until;
+}
+
+/** Clear stored pass timestamps once the unlock window has ended. */
+export async function clearMonitoredPassStorage(): Promise<void> {
+  await AsyncStorage.removeItem(MONITORED_PASS_UNTIL_KEY);
+  await Promise.all(
+    DISTRACTION_APPS.map(async (a) => {
+      await AsyncStorage.removeItem(passKey(a.id));
+      await notifyAccessPassClearedToNative(a.id);
+    }),
+  );
+}
+
+/** Returns true when a pass just expired and storage was cleared. */
+export async function expireMonitoredPassIfNeeded(at: number = Date.now()): Promise<boolean> {
+  const until = await getMonitoredPassUntil();
+  if (until == null || at < until) return false;
+  await clearMonitoredPassStorage();
+  return true;
+}
+
 /**
- * After ritual completes: this app (and only this app) is unlocked for the configured window.
+ * After ritual completes: all monitored apps unlock together for the configured window.
+ * Returns the expiry timestamp (ms).
+ */
+export async function grantAccessPassForMonitoredApps(fromTime: number = Date.now()): Promise<number> {
+  const ms = await getPassDurationMs();
+  const untilMs = fromTime + ms;
+  const ids = await getMonitoredAppIds();
+  await AsyncStorage.setItem(MONITORED_PASS_UNTIL_KEY, String(untilMs));
+  await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+  await Promise.all(
+    ids.map(async (id) => {
+      await AsyncStorage.setItem(passKey(id), String(untilMs));
+      await notifyAccessPassGrantedToNative(id, untilMs);
+    }),
+  );
+
+  if (Platform.OS === 'ios') {
+    const { syncMonitoredAppShields } =
+      require('./monitoredAppShield') as typeof import('./monitoredAppShield');
+    const { scheduleMonitoredPassRelock } =
+      require('./monitoredPassExpiry') as typeof import('./monitoredPassExpiry');
+    const { scheduleSocialLockPassRelock } =
+      require('./socialLockPassSchedule') as typeof import('./socialLockPassSchedule');
+    await syncMonitoredAppShields();
+    scheduleMonitoredPassRelock(untilMs);
+    await scheduleSocialLockPassRelock(fromTime, untilMs);
+  }
+
+  return untilMs;
+}
+
+/**
+ * @deprecated Prefer grantAccessPassForMonitoredApps — unlocks one app only.
  */
 export async function grantAccessPassForApp(appId: string, fromTime: number = Date.now()): Promise<void> {
   const ms = await getPassDurationMs();
@@ -88,6 +156,7 @@ export async function clearAccessPassForApp(appId: string): Promise<void> {
 
 export async function clearAllAccessPasses(): Promise<void> {
   await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+  await AsyncStorage.removeItem(MONITORED_PASS_UNTIL_KEY);
   await Promise.all(
     DISTRACTION_APPS.map(async (a) => {
       await AsyncStorage.removeItem(passKey(a.id));
@@ -96,8 +165,9 @@ export async function clearAllAccessPasses(): Promise<void> {
   );
 }
 
-/** When user opens a distraction: show wall if that app has no active pass. */
+/** When user opens a monitored distraction: show wall unless the shared pass is active. */
 export async function shouldShowFocusWallForApp(appId: string): Promise<boolean> {
+  if (await isMonitoredPassActive()) return false;
   return !(await isAccessPassActiveForApp(appId));
 }
 

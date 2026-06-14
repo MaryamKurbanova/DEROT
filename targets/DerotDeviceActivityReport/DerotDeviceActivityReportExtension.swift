@@ -6,6 +6,25 @@ extension DeviceActivityReport.Context {
   static let derotBar = Self("derotBar")
 }
 
+private enum DerotUsageStore {
+  static let reportTodayMinutes = "DEROT_REPORT_TODAY_MINUTES"
+  static let sampleReady = "DEROT_SCREEN_TIME_SAMPLE_READY"
+}
+
+private func derotAppGroupId() -> String? {
+  Bundle.main.object(forInfoDictionaryKey: "REACT_NATIVE_DEVICE_ACTIVITY_APP_GROUP") as? String
+}
+
+private func persistTodayMinutes(_ minutes: Int) {
+  guard let group = derotAppGroupId(), let ud = UserDefaults(suiteName: group) else { return }
+  let rounded = max(0, minutes)
+  ud.set(rounded, forKey: DerotUsageStore.reportTodayMinutes)
+  ud.set(Date().timeIntervalSince1970, forKey: "DEROT_REPORT_TODAY_UPDATED_AT")
+  if rounded > 0 {
+    ud.set(true, forKey: DerotUsageStore.sampleReady)
+  }
+}
+
 struct DerotBarReportConfiguration {
   struct Row: Identifiable {
     let id: Int
@@ -14,32 +33,32 @@ struct DerotBarReportConfiguration {
   }
 
   var rows: [Row]
+  var totalMinutes: Int
 }
 
-/// Renders today’s usage for the filter your app passes into `DeviceActivityReport` (monitored selection).
 struct DerotBarReportView: View {
   let configuration: DerotBarReportConfiguration
 
+  private func formatTotal(_ minutes: Int) -> String {
+    if minutes < 1 { return "—" }
+    let h = minutes / 60
+    let m = minutes % 60
+    if h <= 0 { return "\(m)min" }
+    if m <= 0 { return "\(h)h" }
+    return "\(h)h \(m)min"
+  }
+
   var body: some View {
-    if configuration.rows.isEmpty {
-      Text("No activity in this range for your monitored apps.")
-        .font(.footnote)
+    VStack(spacing: 6) {
+      Text("Today")
+        .font(.caption)
         .foregroundStyle(.secondary)
-        .padding()
-    } else {
-      List {
-        ForEach(configuration.rows) { row in
-          HStack {
-            Text(row.title)
-            Spacer()
-            Text("\(Int(row.minutes))m")
-              .monospacedDigit()
-              .foregroundStyle(.secondary)
-          }
-        }
-      }
-      .listStyle(.plain)
+      Text(formatTotal(configuration.totalMinutes))
+        .font(.system(size: 36, weight: .semibold, design: .rounded))
+        .monospacedDigit()
+        .foregroundStyle(.primary)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 
@@ -52,23 +71,18 @@ struct DerotBarReportScene: DeviceActivityReportScene {
   }
 
   func makeConfiguration(representing data: DeviceActivityResults<DeviceActivityData>) async -> DerotBarReportConfiguration {
-    var rows: [(String, Double)] = []
+    var totalSeconds: TimeInterval = 0
+
     for await datum in data {
       for await segment in datum.activitySegments {
-        for await category in segment.categories {
-          for await appActivity in category.applications {
-            let title = appActivity.application.localizedDisplayName ?? "App"
-            rows.append((title, appActivity.totalActivityDuration / 60.0))
-          }
-        }
+        totalSeconds += segment.totalActivityDuration
       }
     }
-    rows.sort { $0.1 > $1.1 }
-    let top = Array(rows.prefix(12))
-    let numbered = top.enumerated().map {
-      DerotBarReportConfiguration.Row(id: $0.offset, title: $0.element.0, minutes: $0.element.1)
-    }
-    return DerotBarReportConfiguration(rows: numbered)
+
+    let totalMinutes = max(0, Int((totalSeconds / 60.0).rounded()))
+    persistTodayMinutes(totalMinutes)
+
+    return DerotBarReportConfiguration(rows: [], totalMinutes: totalMinutes)
   }
 }
 

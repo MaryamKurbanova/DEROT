@@ -15,7 +15,8 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { grantAccessPassForApp } from '../lib/accessPass';
+import { grantAccessPassForMonitoredApps } from '../lib/accessPass';
+import { getSocialLockEnabled } from '../lib/monitoredApps';
 import { logReflection } from '../lib/reflectiveLog';
 import { EDITORIAL_FADE_MS, unrot, unrotFonts } from '../theme';
 
@@ -46,7 +47,7 @@ type Props = {
   targetLabel: string;
   onClose: () => void;
   interceptPreamble?: string;
-  onInterceptPassGranted?: () => void;
+  onInterceptPassGranted?: (untilMs: number) => void;
   onLogSaved?: () => void;
   onFlowAbandoned?: () => void;
   /** Fired only when the user taps Exit (not Continue, not OS back). */
@@ -266,9 +267,10 @@ export function FocusWallScreen({
     const intentLine = noteTrim ? `${intent} — ${noteTrim}` : intent;
     try {
       await logReflection({ mood, intent: intentLine, appId: targetAppId });
-      if (purpose === 'intercept') {
-        await grantAccessPassForApp(targetAppId);
-        onInterceptPassGranted?.();
+      const socialLockOn = await getSocialLockEnabled();
+      if (purpose === 'intercept' || socialLockOn) {
+        const untilMs = await grantAccessPassForMonitoredApps();
+        onInterceptPassGranted?.(untilMs);
       }
       savedRef.current = true;
       onLogSaved?.();

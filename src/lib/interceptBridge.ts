@@ -7,9 +7,9 @@ export { requestInterceptWall } from './wallBridge';
  * either call into JS `requestInterceptWall(distractionId)` or emit event `onDistractionLaunch`
  * on `NativeModules.UnrotIntercept` with `{ distractionId, nativeId }`.
  *
- * JS then opens the focus wall if: dashboard is ACTIVE, app is ON in Settings, and that app has
- * no valid hour pass. Completing the 60s exercise records stats and grants ~1h access for that
- * app only (`grantAccessPassForApp`).
+ * JS then opens the focus wall if: dashboard is ACTIVE, app is ON in Settings, and the shared
+ * monitored pass has expired. Completing the reflective log grants access for all monitored apps
+ * for the configured window (`grantAccessPassForMonitoredApps`).
  *
  * iOS: Family Controls / ManagedSettings / DeviceActivity (Screen Time) — optional shields to
  * block the target app until UNROT presents the ritual.

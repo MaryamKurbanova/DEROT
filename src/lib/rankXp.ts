@@ -168,39 +168,49 @@ export async function awardReflectiveLogXp(): Promise<RankPersisted> {
  * Highest tier only once per calendar day when screen data is authoritative.
  * < 2h → +10, < 4h → +5, < 6h → +3.
  */
+let screenBonusFlight: Promise<RankPersisted | null> | null = null;
+
 export async function maybeAwardDailyScreenBonus(
   dailyUsageMinutes: number,
   authoritative: boolean,
 ): Promise<RankPersisted | null> {
   if (!authoritative) return null;
-  const todayKey = dayKeyLocal();
-  const state = await loadRankState();
-  if (state.lastScreenBonusDayKey === todayKey) return null;
+  if (screenBonusFlight) return screenBonusFlight;
 
-  const hours = dailyUsageMinutes / 60;
-  let bonus = 0;
-  if (hours < 2) bonus = 10;
-  else if (hours < 4) bonus = 5;
-  else if (hours < 6) bonus = 3;
+  screenBonusFlight = (async () => {
+    const todayKey = dayKeyLocal();
+    const state = await loadRankState();
+    if (state.lastScreenBonusDayKey === todayKey) return null;
 
-  if (bonus === 0) {
-    await saveRankState({ ...state, lastScreenBonusDayKey: todayKey });
-    return null;
-  }
+    const hours = dailyUsageMinutes / 60;
+    let bonus = 0;
+    if (hours < 2) bonus = 10;
+    else if (hours < 4) bonus = 5;
+    else if (hours < 6) bonus = 3;
 
-  const prevXp = state.xp;
-  const rolled = rollTodayXp(state, todayKey, bonus);
-  const newXp = rolled.xp + bonus;
-  const rank = getRankForXp(newXp);
-  const next: RankPersisted = {
-    ...rolled,
-    xp: newXp,
-    level: rank.level,
-    lastScreenBonusDayKey: todayKey,
-  };
-  await saveRankState(next);
-  showLevelUpIfNeeded(prevXp, newXp);
-  return next;
+    if (bonus === 0) {
+      await saveRankState({ ...state, lastScreenBonusDayKey: todayKey });
+      return null;
+    }
+
+    const prevXp = state.xp;
+    const rolled = rollTodayXp(state, todayKey, bonus);
+    const newXp = rolled.xp + bonus;
+    const rank = getRankForXp(newXp);
+    const next: RankPersisted = {
+      ...rolled,
+      xp: newXp,
+      level: rank.level,
+      lastScreenBonusDayKey: todayKey,
+    };
+    await saveRankState(next);
+    showLevelUpIfNeeded(prevXp, newXp);
+    return next;
+  })().finally(() => {
+    screenBonusFlight = null;
+  });
+
+  return screenBonusFlight;
 }
 
 /** Snapshot for UI (includes derived next rank XP). */

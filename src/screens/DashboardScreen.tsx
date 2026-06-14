@@ -23,6 +23,21 @@ import {
   type DangerZoneInsight,
   type LogEntry,
 } from '../lib/reflectiveLog';
+import { ScreenTimeMetricTile } from '../components/ScreenTimeMetricTile';
+import {
+  fetchTodayScreenTimeWithRetry,
+  hasDerotActivitySelection,
+  isIosScreenTimeApproved,
+  readIosScreenTimeUiSnapshot,
+  readIosTrackingFlags,
+  setScreenTimeRuntimeReady,
+  syncDerotUsageFromPhone,
+  tryEnsureDerotScreenTimeTracking,
+  type ScreenTimeFetchMode,
+} from '../lib/derotIosScreenTime';
+import { formatScreenTimeScopeLabel, readDerotSelectionMeta } from '../lib/derotSelectionMeta';
+import { formatScreenTimeDisplay } from '../lib/screenTimeDisplay';
+import { getHomeSyncedTodayMinutes } from '../lib/screenTimeHomeSync';
 import { getReclaimedFocusSnapshot, type ReclaimedFocusSnapshot } from '../lib/reclaimedFocus';
 import { getReclaimedMomentsToday } from '../lib/reclaimedMoments';
 import {
@@ -54,9 +69,6 @@ const HOME_RANK_GRADIENT_LOCATIONS = HOME_CARD_GRADIENT_LOCATIONS;
 const HOME_RANK_BORDER = HOME_CARD_BORDER;
 const HOME_RANK_STREAK_SURFACE = '#FFFFFF';
 const HOME_RANK_STREAK_BORDER = 'rgba(10, 10, 12, 0.08)';
-const HOME_HERO_GRADIENT = HOME_CARD_GRADIENT;
-const HOME_HERO_GRADIENT_LOCATIONS = HOME_CARD_GRADIENT_LOCATIONS;
-const HOME_HERO_BORDER = HOME_CARD_BORDER;
 const HOME_METRIC_SCREEN_GRADIENT = HOME_CARD_GRADIENT;
 const HOME_METRIC_SCREEN_GRADIENT_LOCATIONS = HOME_CARD_GRADIENT_LOCATIONS;
 const HOME_METRIC_SCREEN_BORDER = HOME_CARD_BORDER;
@@ -66,8 +78,6 @@ const HOME_METRIC_MOMENTS_BORDER = HOME_CARD_BORDER;
 const HOME_PURE_WHITE = '#FFFFFF';
 /** Slight lift from cards */
 const HOME_CANVAS_BG = '#FAFAFA';
-/** Space below Reclaimed Time card before metric row */
-const HERO_TO_METRICS_GAP = 22;
 
 const HOME_SECTION_GAP = 20;
 const HOME_PAGE_PAD_H = 24;
@@ -91,9 +101,7 @@ const LOG_SECTION_TOP_MARGIN = 48;
 const LOG_ANCHOR_MIN_HEIGHT = 120;
 /** Extra scroll padding below LOG for thumb / home indicator */
 const LOG_SCROLL_BOTTOM_COMFORT = 56;
-/** After pull-to-refresh completes: hero highlight + insight pulse */
-const REFRESH_HERO_GLOW_IN_MS = 140;
-const REFRESH_HERO_GLOW_OUT_MS = 420;
+/** After pull-to-refresh completes: insight pulse */
 const REFRESH_INSIGHT_DIP_MS = 160;
 const REFRESH_INSIGHT_RISE_MS = 220;
 const REFRESH_LINE_W = 2;
@@ -101,66 +109,10 @@ const REFRESH_LINE_H_MIN = 10;
 const REFRESH_LINE_H_MAX = 32;
 const REFRESH_LINE_CYCLE_MS = 480;
 const LOG_INNER_DISC = 72;
-/** Reclaimed Time (hero) label */
-const HOME_METRIC_LABEL_FONT_SIZE = 10;
-const HOME_METRIC_LABEL_LINE_HEIGHT = 13;
-/** Screen time / Moments tile labels */
 const HOME_TILE_LABEL_FONT_SIZE = 9;
 const HOME_TILE_LABEL_LINE_HEIGHT = 12;
-
-const ZERO_H_M = '0 h 0 m';
-
-/** TODO: remove — temporary hero reclaimed display for UI review */
-const TEMP_RECLAIMED_HERO_DISPLAY: string | null = '400 m';
-
 const RECLAIMED_COUNT_MS = 600;
-/** Align reclaimed-time count-up with hero segment stagger (see homeSegHero delay). */
-const HERO_COUNT_START_DELAY_MS = 80;
-/** Align moments count-up with metrics segment stagger (see homeSegMetrics delay). */
 const METRICS_MOMENTS_COUNT_START_DELAY_MS = 120;
-
-function reclaimedHeroSpoken(display: string): string {
-  return display === ZERO_H_M ? 'zero hours, zero minutes' : display.replace(/h\b/g, 'hours').replace(/m\b/g, 'minutes');
-}
-
-function reclaimedHeroAccessibilityLabel(
-  display: string,
-  authoritative: boolean,
-  contextual: string | null,
-): string {
-  const spoken = reclaimedHeroSpoken(display);
-  let line = authoritative
-    ? `Reclaimed time this week, ${spoken}, versus your onboarding baseline`
-    : `Reclaimed time, ${spoken}`;
-  if (contextual) line += `. ${contextual}`;
-  return line;
-}
-
-function parseTempReclaimedMinutes(temp: string | null): number | null {
-  if (temp == null) return null;
-  const m = temp.match(/^([\d.]+)\s*m\b/i);
-  if (m) return Number(m[1]);
-  return null;
-}
-
-function formatReclaimedHeroProgress(minutes: number, tempMMode: boolean): string {
-  if (minutes < 0.5) return ZERO_H_M;
-  if (tempMMode) return `${Math.round(minutes)} m`;
-  const h = minutes / 60;
-  return h < 10 && h % 1 !== 0 ? h.toFixed(1) : String(Math.round(h * 10) / 10).replace(/\.0$/, '');
-}
-
-/** Human meaning for weekly reclaimed minutes (not shown when nearly zero). */
-function reclaimedContextualSubtitle(minutes: number): string | null {
-  if (minutes < 15) return null;
-  if (minutes < 55) return "That's time for a real breather this week.";
-  if (minutes < 100) return "That's three long walks back in your week.";
-  if (minutes < 200) return "Like a long afternoon, back in your hands.";
-  if (minutes < 360) return "Closer to a full workday than a coffee break.";
-  if (minutes < 520) return "Equivalent to a full night's sleep.";
-  return "That's serious time you earned back.";
-}
-
 const HOME_ENTRANCE_MS = 800;
 const HOME_STAGGER_DUR = 720;
 /** Home ↔ Journal mode cross-fade */
@@ -171,7 +123,7 @@ const homeStyles = StyleSheet.create({
     flexGrow: 1,
   },
   topSectionOpen: {
-    marginBottom: 4,
+    marginBottom: 22,
     alignSelf: 'stretch',
   },
   topNav: {
@@ -309,75 +261,6 @@ const homeStyles = StyleSheet.create({
     color: HOME_PRIMARY,
     fontVariant: ['tabular-nums'],
     opacity: 0.45,
-  },
-  heroSoftOuterWrap: {
-    alignSelf: 'stretch',
-    borderRadius: HOME_RADIUS,
-    overflow: 'hidden',
-    marginBottom: HERO_TO_METRICS_GAP,
-    borderWidth: 1,
-    borderColor: HOME_HERO_BORDER,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.06,
-        shadowRadius: 24,
-      },
-      android: { elevation: 4 },
-      default: {},
-    }),
-  },
-  heroGradientPad: {
-    paddingHorizontal: 26,
-    paddingVertical: 26,
-  },
-  heroSubtitle: {
-    marginTop: 16,
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 14,
-    lineHeight: 22,
-    color: HOME_SECONDARY,
-    maxWidth: 360,
-    opacity: 1,
-  },
-  monoLabel: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: HOME_METRIC_LABEL_FONT_SIZE,
-    lineHeight: HOME_METRIC_LABEL_LINE_HEIGHT,
-    letterSpacing: 2.4,
-    color: HOME_LABEL,
-    marginBottom: 12,
-    opacity: 1,
-  },
-  /** Reclaimed time — largest numeric on home */
-  heroMetricValue: {
-    fontFamily: unrotFonts.interLight,
-    fontSize: 38,
-    lineHeight: 44,
-    color: HOME_PRIMARY,
-    fontVariant: ['tabular-nums'],
-    letterSpacing: -0.6,
-  },
-  heroMetricStack: {
-    position: 'relative',
-    alignSelf: 'flex-start',
-  },
-  heroMetricGlowLayer: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-  },
-  heroMetricGlowText: {
-    fontFamily: unrotFonts.interLight,
-    fontSize: 38,
-    lineHeight: 44,
-    color: HOME_PRIMARY,
-    fontVariant: ['tabular-nums'],
-    letterSpacing: -0.6,
-    textShadowColor: 'rgba(255, 255, 255, 0.9)',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 16,
   },
   metricsSplitRow: {
     flexDirection: 'row',
@@ -735,157 +618,14 @@ function HomeTopSection({
   );
 }
 
-function HomeHeroSection({
-  displayFinal,
-  targetMinutes,
-  tempMMode,
-  screenDataAuthoritative,
-  contextualLine,
-  animationNonce,
-  refreshDelightNonce,
-}: {
-  displayFinal: string;
-  targetMinutes: number;
-  tempMMode: boolean;
-  screenDataAuthoritative: boolean;
-  contextualLine: string | null;
-  animationNonce: number;
-  refreshDelightNonce: number;
-}) {
-  const [shown, setShown] = useState(() =>
-    targetMinutes < 0.5 ? displayFinal : formatReclaimedHeroProgress(0, tempMMode),
-  );
-  const animMinutes = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(1)).current;
-  const refreshGlow = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    let cancelled = false;
-    let listenerId: string | undefined;
-
-    const resetBaseline = () => {
-      animMinutes.setValue(0);
-      scale.setValue(1);
-      setShown(targetMinutes < 0.5 ? displayFinal : formatReclaimedHeroProgress(0, tempMMode));
-    };
-
-    resetBaseline();
-
-    if (targetMinutes < 0.5) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const startTimer = setTimeout(() => {
-      if (cancelled) return;
-      listenerId = animMinutes.addListener(({ value }) => {
-        if (!cancelled) setShown(formatReclaimedHeroProgress(value, tempMMode));
-      });
-
-      Animated.timing(animMinutes, {
-        toValue: targetMinutes,
-        duration: RECLAIMED_COUNT_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }).start(({ finished }) => {
-        if (listenerId != null) {
-          animMinutes.removeListener(listenerId);
-          listenerId = undefined;
-        }
-        if (cancelled || !finished) return;
-        setShown(displayFinal);
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        scale.setValue(1.042);
-        Animated.spring(scale, {
-          toValue: 1,
-          friction: 7,
-          tension: 220,
-          useNativeDriver: true,
-        }).start();
-      });
-    }, HERO_COUNT_START_DELAY_MS);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(startTimer);
-      if (listenerId != null) animMinutes.removeListener(listenerId);
-      animMinutes.stopAnimation();
-    };
-  }, [animationNonce, targetMinutes, displayFinal, tempMMode, animMinutes, scale]);
-
-  useEffect(() => {
-    if (refreshDelightNonce < 1) return;
-    refreshGlow.setValue(0);
-    Animated.sequence([
-      Animated.timing(refreshGlow, {
-        toValue: 1,
-        duration: REFRESH_HERO_GLOW_IN_MS,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(refreshGlow, {
-        toValue: 0,
-        duration: REFRESH_HERO_GLOW_OUT_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [refreshDelightNonce, refreshGlow]);
-
-  return (
-    <View
-      style={homeStyles.heroSoftOuterWrap}
-      accessible
-      accessibilityRole="summary"
-      accessibilityLabel={reclaimedHeroAccessibilityLabel(
-        displayFinal,
-        screenDataAuthoritative,
-        contextualLine,
-      )}
-    >
-      <LinearGradient
-        colors={[...HOME_HERO_GRADIENT]}
-        locations={[...HOME_HERO_GRADIENT_LOCATIONS]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={homeStyles.heroGradientPad}
-      >
-        <Text style={homeStyles.monoLabel} numberOfLines={2}>
-          Reclaimed Time This Week
-        </Text>
-        <Animated.View style={{ transform: [{ scale }] }}>
-          <View style={homeStyles.heroMetricStack}>
-            <Text style={homeStyles.heroMetricValue} importantForAccessibility="no">
-              {shown}
-            </Text>
-            <Animated.View
-              style={[homeStyles.heroMetricGlowLayer, { opacity: refreshGlow }]}
-              pointerEvents="none"
-              importantForAccessibility="no"
-            >
-              <Text style={homeStyles.heroMetricGlowText} importantForAccessibility="no">
-                {shown}
-              </Text>
-            </Animated.View>
-          </View>
-        </Animated.View>
-        {contextualLine ? (
-          <Text style={homeStyles.heroSubtitle} importantForAccessibility="no">
-            {contextualLine}
-          </Text>
-        ) : null}
-      </LinearGradient>
-    </View>
-  );
-}
-
 function HomeMetricsBand({
   screenHrsDisplay,
+  screenTimeCaption,
   momentsCount,
   animationNonce,
 }: {
   screenHrsDisplay: string;
+  screenTimeCaption: string;
   momentsCount: number;
   animationNonce: number;
 }) {
@@ -946,30 +686,31 @@ function HomeMetricsBand({
     };
   }, [animationNonce, momentsCount, animMoments, momentsScale]);
 
-  const screenTimeNeedsUnitSuffix = !screenHrsDisplay.includes(' m');
+  const screenTimeNeedsUnitSuffix =
+    screenHrsDisplay !== '…' &&
+    screenHrsDisplay !== '—' &&
+    screenHrsDisplay !== '0m' &&
+    !/\d+min|\d+h\b/.test(screenHrsDisplay);
   const screenA11y = `Screen time today, ${screenHrsDisplay}`;
   const momentsA11y = `Reclaimed moments today, ${momentsCount}`;
   return (
     <View style={homeStyles.metricsSplitRow}>
-      <View style={homeStyles.metricTileShellScreen} accessible accessibilityRole="text" accessibilityLabel={screenA11y}>
-        <LinearGradient
-          colors={[...HOME_METRIC_SCREEN_GRADIENT]}
-          locations={[...HOME_METRIC_SCREEN_GRADIENT_LOCATIONS]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={homeStyles.metricBoxBase}
-        >
-          <Text style={homeStyles.monoLabelScreenTime} importantForAccessibility="no">
-            SCREEN TIME
-          </Text>
-          <Text style={homeStyles.metricStat} importantForAccessibility="no">
-            {screenHrsDisplay}
-            {screenTimeNeedsUnitSuffix ? <Text style={homeStyles.metricStatUnit}> h</Text> : null}
-          </Text>
-          <Text style={homeStyles.metricCaption} importantForAccessibility="no">
-            Today
-          </Text>
-        </LinearGradient>
+      <View style={homeStyles.metricTileShellScreen}>
+        <ScreenTimeMetricTile
+          screenHrsDisplay={screenHrsDisplay}
+          screenTimeCaption={screenTimeCaption}
+          screenTimeNeedsUnitSuffix={screenTimeNeedsUnitSuffix}
+          screenA11y={screenA11y}
+          gradientColors={HOME_METRIC_SCREEN_GRADIENT}
+          gradientLocations={HOME_METRIC_SCREEN_GRADIENT_LOCATIONS}
+          styles={{
+            metricBoxBase: homeStyles.metricBoxBase,
+            monoLabelScreenTime: homeStyles.monoLabelScreenTime,
+            metricStat: homeStyles.metricStat,
+            metricStatUnit: homeStyles.metricStatUnit,
+            metricCaption: homeStyles.metricCaption,
+          }}
+        />
       </View>
       <View style={homeStyles.metricTileShellMoments} accessible accessibilityRole="text" accessibilityLabel={momentsA11y}>
         <LinearGradient
@@ -1206,6 +947,7 @@ function HomeLogFooter({
 
 type Props = {
   statsTick: number;
+  homeSyncedMinutes?: number;
   onOpenSettings: () => void;
   onOpenRank: () => void;
   onStartReflectiveLog: () => void;
@@ -1285,20 +1027,38 @@ function JournalEntryRow({ entry }: { entry: LogEntry }) {
   );
 }
 
-export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStartReflectiveLog }: Props) {
+export function DashboardScreen({
+  statsTick,
+  homeSyncedMinutes = 0,
+  onOpenSettings,
+  onOpenRank,
+  onStartReflectiveLog,
+}: Props) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const [view, setView] = useState<'home' | 'journal'>('home');
-  /** Bumps when returning to home so reclaimed time + moments count-ups replay. */
+  /** Bumps when returning to home so moments count-ups replay. */
   const [homeCountAnimNonce, setHomeCountAnimNonce] = useState(1);
   const prevViewRef = useRef(view);
   const [analytics, setAnalytics] = useState<LogEntry[]>([]);
-  const [reclaimedSnapshot, setReclaimedSnapshot] =
-    useState<ReclaimedFocusSnapshot | null>(null);
+  const [reclaimedSnapshot, setReclaimedSnapshot] = useState<ReclaimedFocusSnapshot | null>(null);
   const [momentsCount, setMomentsCount] = useState(0);
   const [rankUi, setRankUi] = useState<RankUiSnapshot>(() => toRankUiSnapshot(DEFAULT_RANK_STATE));
   const [homeRefreshing, setHomeRefreshing] = useState(false);
   const [refreshDelightNonce, setRefreshDelightNonce] = useState(0);
+  const loadRunningRef = useRef(false);
+  const loadQueueRef = useRef(Promise.resolve());
+  const [iosScreenUi, setIosScreenUi] = useState(() => {
+    const snap = readIosScreenTimeUiSnapshot();
+    return {
+      trackingStarted: snap.trackingStarted,
+      hasSelection: snap.hasSelection,
+      scopeLabel:
+        Platform.OS === 'ios'
+          ? formatScreenTimeScopeLabel(readDerotSelectionMeta())
+          : 'Today',
+    };
+  });
 
   const modeHomeOpacity = useRef(new Animated.Value(1)).current;
   const modeJournalOpacity = useRef(new Animated.Value(0)).current;
@@ -1321,20 +1081,28 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
     ]).start();
   }, [view, modeHomeOpacity, modeJournalOpacity]);
 
-  const homeShellOpacity = useRef(new Animated.Value(0)).current;
-  const homeShellY = useRef(new Animated.Value(6)).current;
-  const homeSegTop = useRef(new Animated.Value(0)).current;
-  const homeSegHero = useRef(new Animated.Value(0)).current;
-  const homeSegMetrics = useRef(new Animated.Value(0)).current;
-  const homeSegDanger = useRef(new Animated.Value(0)).current;
-  const homeSegFooter = useRef(new Animated.Value(0)).current;
+  const homeShellOpacity = useRef(new Animated.Value(1)).current;
+  const homeShellY = useRef(new Animated.Value(0)).current;
+  const homeSegTop = useRef(new Animated.Value(1)).current;
+  const homeSegMetrics = useRef(new Animated.Value(1)).current;
+  const homeSegDanger = useRef(new Animated.Value(1)).current;
+  const homeSegFooter = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (view !== 'home') return;
+    const fromJournal = prevViewRef.current === 'journal';
+    if (!fromJournal) {
+      homeShellOpacity.setValue(1);
+      homeShellY.setValue(0);
+      homeSegTop.setValue(1);
+      homeSegMetrics.setValue(1);
+      homeSegDanger.setValue(1);
+      homeSegFooter.setValue(1);
+      return;
+    }
     homeShellOpacity.setValue(0);
     homeShellY.setValue(6);
     homeSegTop.setValue(0);
-    homeSegHero.setValue(0);
     homeSegMetrics.setValue(0);
     homeSegDanger.setValue(0);
     homeSegFooter.setValue(0);
@@ -1359,30 +1127,23 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
         easing: ease,
         useNativeDriver: true,
       }),
-      Animated.timing(homeSegHero, {
+      Animated.timing(homeSegMetrics, {
         toValue: 1,
         delay: 80,
         duration: HOME_STAGGER_DUR,
         easing: ease,
         useNativeDriver: true,
       }),
-      Animated.timing(homeSegMetrics, {
+      Animated.timing(homeSegDanger, {
         toValue: 1,
         delay: 120,
         duration: HOME_STAGGER_DUR,
         easing: ease,
         useNativeDriver: true,
       }),
-      Animated.timing(homeSegDanger, {
-        toValue: 1,
-        delay: 160,
-        duration: HOME_STAGGER_DUR,
-        easing: ease,
-        useNativeDriver: true,
-      }),
       Animated.timing(homeSegFooter, {
         toValue: 1,
-        delay: 200,
+        delay: 160,
         duration: HOME_STAGGER_DUR,
         easing: ease,
         useNativeDriver: true,
@@ -1393,33 +1154,137 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
     homeShellOpacity,
     homeShellY,
     homeSegTop,
-    homeSegHero,
     homeSegMetrics,
     homeSegDanger,
     homeSegFooter,
   ]);
 
+  const performDashboardDataLoad = useCallback(async (screenTimeDeep: boolean, fetchMode: ScreenTimeFetchMode = 'standard') => {
+    try {
+      const syncedToday = Platform.OS === 'ios' ? Math.max(homeSyncedMinutes, getHomeSyncedTodayMinutes()) : 0;
+      if (Platform.OS === 'ios') {
+        setScreenTimeRuntimeReady(true);
+        if (screenTimeDeep) {
+          try {
+            await tryEnsureDerotScreenTimeTracking();
+          } catch {
+            /* monitoring optional */
+          }
+        }
+      } else {
+        syncDerotUsageFromPhone();
+      }
+
+      const screenTimePoll =
+        Platform.OS === 'ios' && screenTimeDeep
+          ? fetchTodayScreenTimeWithRetry(fetchMode)
+          : Promise.resolve(0);
+
+      const [all, focusSnap, moments, polledMinutes] = await Promise.all([
+        getAllLogsForAnalytics(),
+        getReclaimedFocusSnapshot(),
+        getReclaimedMomentsToday(),
+        screenTimePoll,
+      ]);
+
+      const mergedDaily =
+        Platform.OS === 'ios'
+          ? syncedToday
+          : Math.max(focusSnap.currentDailyUsageMinutes, polledMinutes);
+
+      const mergedSnap: ReclaimedFocusSnapshot = {
+        ...focusSnap,
+        currentDailyUsageMinutes: mergedDaily,
+        screenDataAuthoritative: focusSnap.screenDataAuthoritative || mergedDaily >= 1,
+      };
+
+      await maybeAwardDailyScreenBonus(
+        mergedSnap.currentDailyUsageMinutes,
+        mergedSnap.screenDataAuthoritative,
+      );
+      const rankSnap = toRankUiSnapshot(await loadRankState());
+      setAnalytics(all);
+      setReclaimedSnapshot(mergedSnap);
+      setMomentsCount(moments);
+      setRankUi(rankSnap);
+    } catch (e) {
+      console.warn('loadDashboardData', e);
+    }
+  }, [homeSyncedMinutes]);
+
+  const loadDashboardData = useCallback(
+    (screenTimeDeep: boolean, fetchMode: ScreenTimeFetchMode = 'standard') => {
+      const queued = loadQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          loadRunningRef.current = true;
+          try {
+            await performDashboardDataLoad(screenTimeDeep, fetchMode);
+          } finally {
+            loadRunningRef.current = false;
+          }
+        });
+      loadQueueRef.current = queued;
+      return queued;
+    },
+    [performDashboardDataLoad],
+  );
+
+  /** Fast: logs, rank, moments — always runs (never skipped). */
   const refresh = useCallback(async () => {
-    const [all, focusSnap, moments] = await Promise.all([
-      getAllLogsForAnalytics(),
-      getReclaimedFocusSnapshot(),
-      getReclaimedMomentsToday(),
-    ]);
-    await maybeAwardDailyScreenBonus(focusSnap.currentDailyUsageMinutes, focusSnap.screenDataAuthoritative);
-    const rankSnap = toRankUiSnapshot(await loadRankState());
-    setAnalytics(all);
-    setReclaimedSnapshot(focusSnap);
-    setMomentsCount(moments);
-    setRankUi(rankSnap);
-  }, []);
+    await loadDashboardData(false);
+  }, [loadDashboardData]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const refreshUi = () => {
+      try {
+        setScreenTimeRuntimeReady(true);
+        const flags = readIosTrackingFlags();
+        setIosScreenUi({
+          trackingStarted: flags.trackingStarted,
+          hasSelection: hasDerotActivitySelection(),
+          scopeLabel: formatScreenTimeScopeLabel(readDerotSelectionMeta()),
+        });
+      } catch {
+        /* Screen Time bridge may not be ready on first paint */
+      }
+    };
+    refreshUi();
+    const timer = setTimeout(refreshUi, 400);
+    const timer2 = setTimeout(refreshUi, 2500);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(timer2);
+    };
+  }, [reclaimedSnapshot, statsTick]);
+
+  const todayScreenMinutes = useMemo(() => {
+    if (Platform.OS !== 'ios') {
+      return reclaimedSnapshot?.currentDailyUsageMinutes ?? 0;
+    }
+    return Math.max(homeSyncedMinutes, getHomeSyncedTodayMinutes());
+  }, [reclaimedSnapshot, homeSyncedMinutes, statsTick]);
+
+  const screenTimeCaption = useMemo(() => {
+    if (Platform.OS === 'ios' && todayScreenMinutes < 1) return 'Sync in Settings';
+    if (todayScreenMinutes >= 1) return iosScreenUi.scopeLabel;
+    return 'Sync in Settings';
+  }, [iosScreenUi.scopeLabel, todayScreenMinutes]);
+
+  const screenHrsDisplay = useMemo(() => {
+    if (Platform.OS === 'ios' && todayScreenMinutes < 1) return '—';
+    if (todayScreenMinutes >= 1) return formatScreenTimeDisplay(todayScreenMinutes);
+    return '—';
+  }, [todayScreenMinutes]);
 
   const onHomeRefresh = useCallback(async () => {
     setHomeRefreshing(true);
     try {
       await refresh();
+      setRefreshDelightNonce((n) => n + 1);
     } finally {
       setHomeRefreshing(false);
-      setRefreshDelightNonce((n) => n + 1);
     }
   }, [refresh]);
 
@@ -1440,41 +1305,10 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
 
   const dangerInsight = useMemo(() => computeDangerZoneInsight(analytics), [analytics]);
 
-  const screenHrsDisplay = useMemo(() => {
-    if (reclaimedSnapshot == null || !reclaimedSnapshot.screenDataAuthoritative) return ZERO_H_M;
-    const h = reclaimedSnapshot.currentDailyUsageMinutes / 60;
-    if (h < 0.05) return ZERO_H_M;
-    return h < 10 && h % 1 !== 0 ? h.toFixed(1) : String(Math.round(h * 10) / 10).replace(/\.0$/, '');
-  }, [reclaimedSnapshot]);
-
-  const reclaimedHrsDisplay = useMemo(() => {
-    if (TEMP_RECLAIMED_HERO_DISPLAY != null) return TEMP_RECLAIMED_HERO_DISPLAY;
-    if (reclaimedSnapshot == null || !reclaimedSnapshot.screenDataAuthoritative) return ZERO_H_M;
-    const m = reclaimedSnapshot.weeklyReclaimedMinutes;
-    if (m == null || m < 0.5) return ZERO_H_M;
-    const h = m / 60;
-    return h < 10 && h % 1 !== 0 ? h.toFixed(1) : String(Math.round(h * 10) / 10).replace(/\.0$/, '');
-  }, [reclaimedSnapshot]);
-
-  const reclaimedTargetMinutes = useMemo(() => {
-    const parsed = parseTempReclaimedMinutes(TEMP_RECLAIMED_HERO_DISPLAY);
-    if (parsed != null) return parsed;
-    if (reclaimedSnapshot == null || !reclaimedSnapshot.screenDataAuthoritative) return 0;
-    const w = reclaimedSnapshot.weeklyReclaimedMinutes;
-    if (w == null || w < 0.5) return 0;
-    return w;
-  }, [reclaimedSnapshot]);
-
-  const reclaimedContextLine = useMemo(
-    () => reclaimedContextualSubtitle(reclaimedTargetMinutes),
-    [reclaimedTargetMinutes],
-  );
-
-  const reclaimedTempMMode = TEMP_RECLAIMED_HERO_DISPLAY != null;
-
   useEffect(() => {
+    if (view !== 'home') return;
     void refresh();
-  }, [refresh, statsTick]);
+  }, [view, statsTick, refresh]);
 
   useEffect(() => {
     if (view === 'home' && prevViewRef.current !== 'home') {
@@ -1489,15 +1323,11 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
     void refresh();
   };
 
-  const homeDateLine = useMemo(
-    () =>
-      new Date().toLocaleDateString(undefined, {
-        weekday: 'long',
-        month: 'short',
-        day: 'numeric',
-      }),
-    [statsTick],
-  );
+  const homeDateLine = new Date().toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+  });
 
   const journalSummaryLine = useMemo(() => {
     const count = journalSorted.length;
@@ -1552,8 +1382,6 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
       </Fragment>
     );
   });
-
-  const screenDataOk = reclaimedSnapshot?.screenDataAuthoritative === true;
 
   return (
     <View style={styles.root}>
@@ -1616,21 +1444,10 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
                   />
                 </Animated.View>
 
-                <Animated.View style={{ opacity: homeSegHero }}>
-                  <HomeHeroSection
-                    displayFinal={reclaimedHrsDisplay}
-                    targetMinutes={reclaimedTargetMinutes}
-                    tempMMode={reclaimedTempMMode}
-                    screenDataAuthoritative={screenDataOk}
-                    contextualLine={reclaimedContextLine}
-                    animationNonce={homeCountAnimNonce}
-                    refreshDelightNonce={refreshDelightNonce}
-                  />
-                </Animated.View>
-
                 <Animated.View style={{ opacity: homeSegMetrics }}>
                   <HomeMetricsBand
                     screenHrsDisplay={screenHrsDisplay}
+                    screenTimeCaption={screenTimeCaption}
                     momentsCount={momentsCount}
                     animationNonce={homeCountAnimNonce}
                   />
@@ -1676,10 +1493,11 @@ export function DashboardScreen({ statsTick, onOpenSettings, onOpenRank, onStart
           pointerEvents={view === 'journal' ? 'box-none' : 'none'}
         >
           <ScrollView
-            style={styles.scroll}
+            style={[styles.scroll, { backgroundColor: HOME_CANVAS_BG }]}
             contentContainerStyle={[
               styles.journalScroll,
               {
+                backgroundColor: HOME_CANVAS_BG,
                 paddingTop: insets.top + 16,
                 paddingHorizontal: HOME_PAGE_PAD_H,
                 paddingBottom: Math.max(insets.bottom, G) + 24,

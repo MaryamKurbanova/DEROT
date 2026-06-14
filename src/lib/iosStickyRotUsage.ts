@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { syncDerotUsageFromPhone, tryEnsureDerotScreenTimeTracking } from './derotIosScreenTime';
 import { rotUsageReportsAreAuthoritative } from './rotUsageBridge';
 
 /**
@@ -15,4 +16,10 @@ export async function iosStickyReportsAreAuthoritative(): Promise<boolean> {
  */
 export async function iosEnsureStickyMonitoring(): Promise<void> {
   if (Platform.OS !== 'ios') return;
+  try {
+    await tryEnsureDerotScreenTimeTracking();
+    syncDerotUsageFromPhone();
+  } catch {
+    /* optional */
+  }
 }

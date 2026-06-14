@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-import { DEROT_SELECTION_ID, loadIosDeviceActivity } from './derotIosScreenTime';
+import { DEROT_SELECTION_ID, ensureDerotScreenTimeSelection, loadIosDeviceActivity } from './derotIosScreenTime';
 
 /** Separate from usage monitoring schedule — interval-only 8 PM → 8 AM. */
 export const NIGHT_QUIET_ACTIVITY_NAME = 'DerotNightQuiet';
@@ -28,11 +28,7 @@ export async function startNightQuietSchedule(): Promise<void> {
     throw new Error('Approve Screen Time access first.');
   }
 
-  if (!da.getFamilyActivitySelectionId(DEROT_SELECTION_ID)) {
-    throw new Error(
-      'Choose TikTok, YouTube, Instagram, Snapchat, Facebook (or categories) in the picker below.',
-    );
-  }
+  ensureDerotScreenTimeSelection(da);
 
   da.stopMonitoring([NIGHT_QUIET_ACTIVITY_NAME]);
   cleanUpAfterActivity(NIGHT_QUIET_ACTIVITY_NAME);

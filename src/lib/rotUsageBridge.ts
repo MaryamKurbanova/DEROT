@@ -1,6 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules, Platform } from 'react-native';
-import { loadIosDeviceActivity, readIosTrackingFlags } from './derotIosScreenTime';
+import {
+  hasDerotActivitySelection,
+  isIosScreenTimeApproved,
+  loadIosDeviceActivity,
+  readDerotTodayUsageMinutes,
+  readIosTrackingFlags,
+  syncDerotUsageFromPhone,
+} from './derotIosScreenTime';
 
 /**
  * Live "Rot" usage from system screening:
@@ -34,13 +41,38 @@ function clampMin(n: number): number {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
 }
 
-function iosDeviceActivityAuthoritative(): boolean {
-  const da = loadIosDeviceActivity();
-  if (!da?.isAvailable()) return false;
-  const { AuthorizationStatus, getAuthorizationStatus } = da;
-  if (getAuthorizationStatus() !== AuthorizationStatus.approved) return false;
-  const flags = readIosTrackingFlags(da);
-  return flags.trackingStarted && flags.sampleReady;
+function iosScreenTimeApproved(): boolean {
+  return isIosScreenTimeApproved();
+}
+
+/** Approved + user started tracking + has a persisted app/category selection. */
+function iosScreenTimeTrackingConfigured(): boolean {
+  if (!iosScreenTimeApproved()) return false;
+  try {
+    const flags = readIosTrackingFlags();
+    return flags.trackingStarted && hasDerotActivitySelection();
+  } catch {
+    return false;
+  }
+}
+
+function iosScreenTimePipelineActive(): boolean {
+  if (!iosScreenTimeTrackingConfigured()) return false;
+  try {
+    syncDerotUsageFromPhone();
+    return iosReadTodayUsageMinutes() >= 1;
+  } catch {
+    return false;
+  }
+}
+
+/** Read today's minutes from app-group storage (Apple report preferred). */
+function iosReadTodayUsageMinutes(): number {
+  try {
+    return readDerotTodayUsageMinutes();
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -58,7 +90,7 @@ export async function rotUsageReportsAreAuthoritative(): Promise<boolean> {
     }
   }
 
-  if (Platform.OS === 'ios' && iosDeviceActivityAuthoritative()) {
+  if (Platform.OS === 'ios' && iosScreenTimePipelineActive()) {
     return true;
   }
 
@@ -79,10 +111,9 @@ export async function getCurrentDailyRotUsageMinutes(): Promise<number> {
     }
   }
 
-  if (Platform.OS === 'ios' && iosDeviceActivityAuthoritative()) {
-    const da = loadIosDeviceActivity();
-    const v = da?.userDefaultsGet<number>('DEROT_DAILY_TODAY_MINUTES');
-    if (typeof v === 'number') return clampMin(v);
+  if (Platform.OS === 'ios' && iosScreenTimeTrackingConfigured()) {
+    syncDerotUsageFromPhone();
+    return iosReadTodayUsageMinutes();
   }
 
   const raw = await AsyncStorage.getItem(DEV_MOCK_DAILY_ROT_MINUTES_KEY);
@@ -100,10 +131,12 @@ export async function getWeeklyRotUsageMinutes(): Promise<number> {
     }
   }
 
-  if (Platform.OS === 'ios' && iosDeviceActivityAuthoritative()) {
+  if (Platform.OS === 'ios' && iosScreenTimePipelineActive()) {
+    syncDerotUsageFromPhone();
     const da = loadIosDeviceActivity();
     const v = da?.userDefaultsGet<number>('DEROT_WEEKLY_ROLLING_MINUTES');
-    if (typeof v === 'number') return clampMin(v);
+    if (typeof v === 'number' && v > 0) return clampMin(v);
+    return iosReadTodayUsageMinutes();
   }
 
   const raw = await AsyncStorage.getItem(DEV_MOCK_WEEKLY_ROT_MINUTES_KEY);

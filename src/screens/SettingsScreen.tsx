@@ -13,8 +13,9 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IosScreenTimePanel } from '../components/IosScreenTimePanel';
 import { MonitoredAppIcon } from '../components/MonitoredAppIcon';
-import { SettingsNightQuietPanel } from '../components/SettingsNightQuietPanel';
+import { SocialEntertainmentLinkSheet } from '../components/SocialEntertainmentLinkSheet';
 import {
   getPassDurationMinutes,
   PASS_DURATION_MINUTES_DEFAULT,
@@ -23,7 +24,13 @@ import {
   setPassDurationMinutes,
 } from '../lib/accessPass';
 import { DISTRACTION_APPS } from '../lib/distractionApps';
-import { getMonitoredAppIds, setAppMonitored } from '../lib/monitoredApps';
+import { ensureMonitoredPassRelockState } from '../lib/monitoredPassExpiry';
+import { getSocialLockEnabled, setSocialLockEnabled } from '../lib/monitoredApps';
+import {
+  ensureScreenTimeApprovedForLock,
+  isSocialLockSelectionLinked,
+  syncMonitoredAppShields,
+} from '../lib/monitoredAppShield';
 import { loadIosDeviceActivity } from '../lib/derotIosScreenTime';
 import {
   getNightQuietHoursEnabled,
@@ -34,30 +41,31 @@ import {
 import { unrot, unrotFonts } from '../theme';
 
 const G = unrot.gutter;
-const ROW_GAP = 24;
 
 type Props = {
   tabBarInset: number;
   onGoBack: () => void;
   onReplayOnboarding?: () => void;
+  onScreenTimeChanged?: () => void;
 };
 
-export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Props) {
+export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding, onScreenTimeChanged }: Props) {
   const insets = useSafeAreaInsets();
-  const [monitored, setMonitored] = useState<Set<string>>(new Set());
+  const [socialLockOn, setSocialLockOn] = useState(false);
+  const [appsLinked, setAppsLinked] = useState(false);
+  const [linkSheetVisible, setLinkSheetVisible] = useState(false);
   const [logEveryMinutes, setLogEveryMinutes] = useState(PASS_DURATION_MINUTES_DEFAULT);
   const [nightQuietOn, setNightQuietOn] = useState(false);
   const [nightQuietBusy, setNightQuietBusy] = useState(false);
   const [, setScreenTimeUiTick] = useState(0);
 
   const refresh = useCallback(async () => {
-    const ids = await getMonitoredAppIds();
-    setMonitored(new Set(ids));
+    setSocialLockOn(await getSocialLockEnabled());
+    setAppsLinked(isSocialLockSelectionLinked());
   }, []);
 
   const refreshPassMinutes = useCallback(async () => {
-    const m = await getPassDurationMinutes();
-    setLogEveryMinutes(m);
+    setLogEveryMinutes(await getPassDurationMinutes());
   }, []);
 
   useEffect(() => {
@@ -71,6 +79,10 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
       if (s === 'active') {
         void refresh();
         void refreshPassMinutes();
+        void (async () => {
+          await ensureMonitoredPassRelockState();
+          await syncMonitoredAppShields();
+        })();
       }
     });
     return () => sub.remove();
@@ -78,57 +90,78 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
 
   const bumpScreenTimeUi = useCallback(() => {
     setScreenTimeUiTick((t) => t + 1);
+    void refresh();
+    void syncMonitoredAppShields();
+    onScreenTimeChanged?.();
+  }, [onScreenTimeChanged, refresh]);
+
+  const onNightQuietSwitch = useCallback(async (on: boolean) => {
+    if (Platform.OS !== 'ios') return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setNightQuietBusy(true);
+    try {
+      if (on) {
+        const da = loadIosDeviceActivity();
+        if (!da?.isAvailable()) {
+          Alert.alert('Lock 8 PM – 8 AM', 'Screen Time is not available in this build.');
+          return;
+        }
+        const { AuthorizationStatus, getAuthorizationStatus, requestAuthorization } = da;
+        if (getAuthorizationStatus() !== AuthorizationStatus.approved) {
+          await requestAuthorization('individual');
+        }
+        if (getAuthorizationStatus() !== AuthorizationStatus.approved) {
+          Alert.alert(
+            'Screen Time required',
+            'Allow Screen Time access when iOS asks, then turn night lock on again.',
+          );
+          return;
+        }
+        await startNightQuietSchedule();
+        await setNightQuietHoursEnabled(true);
+        setNightQuietOn(true);
+      } else {
+        stopNightQuietSchedule();
+        await setNightQuietHoursEnabled(false);
+        setNightQuietOn(false);
+      }
+    } catch (e) {
+      Alert.alert('Lock 8 PM – 8 AM', e instanceof Error ? e.message : String(e));
+    } finally {
+      setNightQuietBusy(false);
+    }
   }, []);
 
-  const onNightQuietSwitch = useCallback(
-    async (on: boolean) => {
-      if (Platform.OS !== 'ios') return;
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      setNightQuietBusy(true);
-      try {
-        if (on) {
-          const da = loadIosDeviceActivity();
-          if (!da?.isAvailable()) {
-            Alert.alert('Lock 8 PM – 8 AM', 'Screen Time is not available in this build.');
-            return;
-          }
-          const { AuthorizationStatus, getAuthorizationStatus, requestAuthorization } = da;
-          if (getAuthorizationStatus() !== AuthorizationStatus.approved) {
-            await requestAuthorization('individual');
-          }
-          if (getAuthorizationStatus() !== AuthorizationStatus.approved) {
-            Alert.alert(
-              'Screen Time required',
-              'Allow Screen Time access when iOS asks, then turn night lock on again.',
-            );
-            return;
-          }
-          await startNightQuietSchedule();
-          await setNightQuietHoursEnabled(true);
-          setNightQuietOn(true);
-        } else {
-          stopNightQuietSchedule();
-          await setNightQuietHoursEnabled(false);
-          setNightQuietOn(false);
-        }
-      } catch (e) {
-        Alert.alert('Lock 8 PM – 8 AM', e instanceof Error ? e.message : String(e));
-      } finally {
-        setNightQuietBusy(false);
-      }
-    },
-    [],
-  );
-
-  const toggleApp = async (appId: string, on: boolean) => {
+  const onSocialLockSwitch = async (on: boolean) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await setAppMonitored(appId, on);
-    setMonitored((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(appId);
-      else next.delete(appId);
-      return next;
-    });
+
+    if (on && Platform.OS === 'ios') {
+      const approved = await ensureScreenTimeApprovedForLock();
+      if (!approved) {
+        Alert.alert(
+          'Screen Time required',
+          'Approve Screen Time access above, then turn social lock on again.',
+        );
+        return;
+      }
+    }
+
+    await setSocialLockEnabled(on);
+    setSocialLockOn(on);
+
+    if (Platform.OS !== 'ios') return;
+
+    if (!on) {
+      await syncMonitoredAppShields();
+      return;
+    }
+
+    if (!isSocialLockSelectionLinked()) {
+      setLinkSheetVisible(true);
+      return;
+    }
+
+    await syncMonitoredAppShields();
   };
 
   return (
@@ -181,7 +214,8 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
           ]}
         >
           <Text style={styles.sliderCaption}>
-            Apps are unlocked for this long until you complete your log.
+            After you complete your log, all locked apps stay unlocked for this long — then they
+            lock again.
           </Text>
           <Slider
             style={styles.sliderTrack}
@@ -201,42 +235,59 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
           <Text style={styles.sliderValue}>{logEveryMinutes} min</Text>
         </View>
 
+        {Platform.OS === 'ios' ? (
+          <View style={styles.screenTimeBlock}>
+            <Text style={[styles.sectionTitle, styles.sectionTitleSpaced]}>iPhone screen time</Text>
+            <IosScreenTimePanel embedded onChanged={bumpScreenTimeUi} />
+          </View>
+        ) : null}
+
         <Text style={[styles.sectionTitle, styles.sectionTitleSpaced]}>Monitored apps</Text>
 
-        {DISTRACTION_APPS.map((app) => {
-          const on = monitored.has(app.id);
-          return (
-            <View key={app.id} style={styles.appRow} accessibilityRole="none">
-              <View style={styles.appIconWrap}>
-                <MonitoredAppIcon appId={app.id} size={36} muted={!on} />
-              </View>
-              <View style={styles.appCopy}>
-                <Text style={styles.appName}>{app.label}</Text>
-              </View>
-              <View style={styles.switchWrap}>
-                <Switch
-                  value={on}
-                  onValueChange={(v) => void toggleApp(app.id, v)}
-                  accessibilityLabel={app.label}
-                  trackColor={{ false: unrot.choiceMuted, true: unrot.ink }}
-                  thumbColor={Platform.OS === 'android' ? '#FFFFFF' : undefined}
-                  ios_backgroundColor={unrot.choiceMuted}
-                />
-              </View>
-            </View>
-          );
-        })}
-
-        <View style={styles.nightLockBlock}>
-          <SettingsNightQuietPanel nightEnabled={nightQuietOn} onSelectionChanged={bumpScreenTimeUi} />
+        <View style={styles.iconRow}>
+          {DISTRACTION_APPS.map((app) => (
+            <MonitoredAppIcon key={app.id} appId={app.id} size={36} muted={!socialLockOn} />
+          ))}
         </View>
+
+        <View style={styles.masterSwitchRow} accessibilityRole="none">
+          <View style={styles.appCopy}>
+            <Text style={styles.appName}>Lock social & entertainment apps</Text>
+            <Text style={styles.onboardingRowHint}>
+              {Platform.OS === 'ios'
+                ? 'TikTok, Instagram, YouTube, Snapchat, Facebook — locked until you complete your log in UNROT.'
+                : 'Available on iPhone with Screen Time.'}
+            </Text>
+          </View>
+          <View style={styles.switchWrap}>
+            <Switch
+              value={socialLockOn}
+              onValueChange={(v) => void onSocialLockSwitch(v)}
+              disabled={Platform.OS !== 'ios'}
+              accessibilityLabel="Lock social and entertainment apps"
+              trackColor={{ false: unrot.choiceMuted, true: unrot.ink }}
+              thumbColor={Platform.OS === 'android' ? '#FFFFFF' : undefined}
+              ios_backgroundColor={unrot.choiceMuted}
+            />
+          </View>
+        </View>
+
+        {Platform.OS === 'ios' && socialLockOn && !appsLinked ? (
+          <Pressable
+            onPress={() => setLinkSheetVisible(true)}
+            style={styles.chooseAppsRow}
+            accessibilityRole="button"
+          >
+            <Text style={styles.chooseAppsText}>Choose apps to lock</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.nightSwitchRow} accessibilityRole="none">
           <View style={styles.appCopy}>
             <Text style={styles.appName}>Lock 8 PM – 8 AM</Text>
             <Text style={styles.onboardingRowHint}>
               {Platform.OS === 'ios'
-                ? 'Requires Screen Time approval and the app picker above.'
+                ? 'Requires Screen Time approval in the section above.'
                 : 'Available on iPhone with Screen Time.'}
             </Text>
           </View>
@@ -253,6 +304,25 @@ export function SettingsScreen({ tabBarInset, onGoBack, onReplayOnboarding }: Pr
           </View>
         </View>
       </ScrollView>
+
+      <SocialEntertainmentLinkSheet
+        visible={linkSheetVisible}
+        onDismiss={(cancelled) => {
+          setLinkSheetVisible(false);
+          void (async () => {
+            if (cancelled) {
+              await setSocialLockEnabled(false);
+              setSocialLockOn(false);
+            } else {
+              await syncMonitoredAppShields();
+            }
+            await refresh();
+          })();
+        }}
+        onLinked={() => {
+          void refresh();
+        }}
+      />
     </View>
   );
 }
@@ -308,6 +378,28 @@ const styles = StyleSheet.create({
     marginTop: 36,
     marginBottom: 22,
   },
+  iconRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 24,
+  },
+  masterSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  chooseAppsRow: {
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  chooseAppsText: {
+    fontFamily: unrotFonts.interRegular,
+    fontSize: 14,
+    lineHeight: 20,
+    color: unrot.ink,
+    textDecorationLine: 'underline',
+  },
   sliderBlock: {
     marginBottom: 8,
   },
@@ -349,18 +441,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: unrot.muted,
   },
-  appRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: ROW_GAP,
-  },
-  appIconWrap: {
-    width: 44,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
   appCopy: {
     flex: 1,
     minWidth: 0,
@@ -378,13 +458,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  nightLockBlock: {
-    marginTop: 36,
+  screenTimeBlock: {
+    marginBottom: 8,
   },
   nightSwitchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 16,
+    marginTop: 36,
     paddingTop: 16,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: 'rgba(17, 17, 17, 0.12)',

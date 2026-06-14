@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "DEROT",
+    "name": "UNROT",
     "slug": "derot",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,9 +9,17 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "io.derot.app"
+      "bundleIdentifier": "io.derot.app",
+      "entitlements": {
+        "com.apple.developer.family-controls": true,
+        "com.apple.security.application-groups": ["group.io.derot.screentime"]
+      },
+      "infoPlist": {
+        "CFBundleDisplayName": "UNROT"
+      }
     },
     "android": {
+      "label": "UNROT",
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png"
