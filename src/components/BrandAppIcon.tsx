@@ -1,8 +1,8 @@
-import { siSnapchat, siTiktok, siYoutube } from 'simple-icons';
+import { siSnapchat, siTiktok, siX, siYoutube } from 'simple-icons';
 import { useId } from 'react';
 import Svg, { Circle, Defs, G, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 
-export type BrandAppId = 'tiktok' | 'snapchat' | 'instagram' | 'facebook' | 'youtube';
+export type BrandAppId = 'tiktok' | 'snapchat' | 'instagram' | 'facebook' | 'youtube' | 'x';
 
 type Props = {
   name: BrandAppId;
@@ -65,6 +65,15 @@ export function BrandAppIcon({ name, size }: Props) {
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24" accessible={false}>
         <Path d={d} fill="#FF0000" />
+      </Svg>
+    );
+  }
+
+  if (name === 'x') {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" accessible={false}>
+        <Rect x={0} y={0} width={24} height={24} rx={5.5} ry={5.5} fill="#000000" />
+        <Path d={siX.path} fill="#FFFFFF" />
       </Svg>
     );
   }
