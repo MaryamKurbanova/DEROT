@@ -1,7 +1,15 @@
-import { spacing, unrot, unrotFonts } from '../../theme';
+import { Platform } from 'react-native';
+import { spacing, unrot } from '../../theme';
 import { BrandAppIcon, type BrandAppId } from '../../components/BrandAppIcon';
 
-export const TOTAL_ONBOARDING_STEPS = 29;
+export const TOTAL_ONBOARDING_STEPS = 39;
+
+/** Onboarding typography — Arial on iOS; closest system sans on Android. */
+export const OB_FONTS = {
+  regular: Platform.select({ ios: 'Arial', android: 'sans-serif', default: 'Arial' }) as string,
+  bold: Platform.select({ ios: 'Arial-BoldMT', android: 'sans-serif-medium', default: 'Arial' }) as string,
+  black: Platform.select({ ios: 'Arial-Black', android: 'sans-serif-black', default: 'Arial' }) as string,
+} as const;
 
 export const OB = {
   padH: 28,
@@ -18,7 +26,7 @@ export const OB = {
   track: '#DDDDDD',
 } as const;
 
-export { spacing, unrot, unrotFonts };
+export { spacing, unrot };
 
 export const AGE_BRACKETS = [
   { label: '13–17', store: '13-17' },
@@ -45,10 +53,21 @@ export function hoursCaption(h: number): string {
   return 'Critical levels';
 }
 
-export function impactStats(hours: number): { daysYear: number; yearsLife: number } {
-  const daysYear = hours > 0 ? Math.round((hours * 365) / 24) : 0;
-  const yearsLife = hours > 0 ? Math.round(((hours * 80) / 24) * 10) / 10 : 0;
-  return { daysYear, yearsLife };
+/** Annual phone-time projection from daily hours (80-year lifetime for years). */
+export function impactStats(hoursPerDay: number): {
+  hoursYear: number;
+  daysYear: number;
+  yearsLife: number;
+} {
+  if (hoursPerDay <= 0) return { hoursYear: 0, daysYear: 0, yearsLife: 0 };
+  const hoursYear = Math.round(hoursPerDay * 365);
+  const daysYear = Math.round((hoursPerDay * 365) / 24);
+  const yearsLife = Math.round(((hoursPerDay * 80) / 24) * 10) / 10;
+  return { hoursYear, daysYear, yearsLife };
+}
+
+export function formatImpactYears(years: number): string {
+  return Number.isInteger(years) ? String(years) : years.toFixed(1);
 }
 
 export function reclaimHoursGoal(hoursPerDay: number): number {
@@ -80,20 +99,80 @@ export function selectedShieldTargets(ids: ShieldTargetId[]) {
   return ids.map((id) => SHIELD_TARGET_BY_ID[id]).filter(Boolean);
 }
 
+export const MIND_GOAL_OPTIONS = [
+  '⏳ Reclaim my time',
+  '📚 Focus on what matters',
+  '☀️ Feel more present',
+  '🧠 Reduce mindless scrolling',
+  '💬 Spend more time with people',
+  '🎨 Make time for my hobbies',
+  '🌱 Build healthier habits',
+  '✨ Be more intentional with my day',
+] as const;
+
+export const LIFE_GOAL_OPTIONS = [
+  '💼 Grow my career',
+  '📚 Learn something new',
+  '💪 Improve my health',
+  '❤️ Strengthen my relationships',
+  '🎨 Be more creative',
+  '🌍 Travel and explore',
+  '💰 Build financial security',
+  '🏡 Create a peaceful life',
+  '🌱 Grow as a person',
+  '🧘 Live more intentionally',
+] as const;
+
+export const LOVED_TIME_FREQUENCY_OPTIONS = [
+  '🌱 Every day',
+  '☀️ A few times a week',
+  '🍃 Once in a while',
+  '🌙 I can\u2019t remember',
+] as const;
+
+export const PHONE_RELATIONSHIP_OPTIONS = [
+  '📱 I use it when I need it',
+  '⚖️ We have a healthy balance',
+  '⏳ I spend more time on it than I\u2019d like',
+  '🌱 I\u2019m working on taking back control',
+] as const;
+
+export const SELF_RELATIONSHIP_OPTIONS = [
+  '🌱 I\u2019m growing and learning',
+  '⚖️ I feel mostly at peace with myself',
+  '🌫️ I feel distracted or disconnected',
+  '🌧️ I can be hard on myself sometimes',
+  '🌿 I\u2019m working on improving it',
+] as const;
+
+export const LIFE_OBSTACLE_OPTIONS = [
+  '📱 Social media distractions',
+  '⏳ Procrastination',
+  '🔋 Low energy',
+  '🌪️ Stress or overthinking',
+  '🕒 Not enough time',
+  '🔁 Habit loops',
+] as const;
+
 export const APP_INTENT_OPTIONS = [
-  'Connecting with friends, messaging, and community updates',
-  'Seeking information, tutorials, news, or inspiration',
-  'Passive entertainment, white noise, and killing empty time',
+  '💬 Stay connected',
+  '🔍 Learn something',
+  '🎬 Be entertained',
+  '⏳ Pass the time',
+  '🌙 Unwind',
+  '📣 Keep up with what\u2019s happening',
 ] as const;
 
 export const FOCUS_VULNERABILITY_OPTIONS = [
-  'During deep-work or study sessions requiring high cognitive effort',
-  'In transitions between tasks when my mind seeks quick stimulation',
-  'Late at night when trying to wind down or fall asleep',
+  '📚 During deep work or studying',
+  '🔄 Between tasks and activities',
+  '🌙 Late at night',
 ] as const;
 
 export const DEVICE_POSITION_OPTIONS = [
-  'Face-up on my desk directly within my field of vision',
-  'In my pocket, prompting quick responses to haptic notifications',
-  'Across the room or put away out of immediate reach',
+  '📱 On my desk',
+  '👖 In my pocket/close by',
+  '🚪 Out of reach',
 ] as const;
+
+export const PHONE_PICKUP_OPTIONS = ['20–50', '50–100', 'over 100'] as const;

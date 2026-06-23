@@ -2,7 +2,6 @@ import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   KeyboardAvoidingView,
   Platform,
@@ -12,24 +11,39 @@ import {
   Text,
   View,
 } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { saveOnboardingProfile, setOnboardingComplete } from '../lib/onboardingStorage';
 import { ReflectiveLogSurface } from '../components/ReflectiveLogSurface';
 import {
   AgeChoiceButton,
   AnimatedHoursCaption,
-  BlueprintSummaryCard,
-  BodyRegular,
+  AttentionLifeStep,
+  BuildingFrameworkStep,
   ChoiceRow,
   ChoiceStack,
-  FadeInText,
+  CommitmentStep,
+  DayOneStreakRevealStep,
+  DigitalReflectionStep,
+  FadeInHeadline,
+  FirstLogCelebrationStep,
+  FreeTrialPitchStep,
+  FreeTrialReminderStep,
+  FreeTrialStartStep,
   Gap,
-  ImpactHeroCard,
-  InsightBody,
-  InsightLight,
+  HowItWorksStep,
+  LockInStep,
+  LogButtonIntroStep,
+  NotificationsConnectStep,
+  PersonalizedSnapshotStep,
+  PhoneTimeImpactStep,
+  PlanReadyStep,
+  ScreenTimeConnectStep,
+  MindGoalsRecapStep,
   MultiChoiceRow,
+  ONBOARDING_CHOICE_GAP,
+  OnboardingChoiceHeading,
   OnboardingFooter,
+  ProfileRecapStep,
   ProgressBar,
   SelectableAppChip,
   SelectedTargetIcons,
@@ -37,110 +51,101 @@ import {
   StepCounter,
   StepShell,
   StaggerChipGrid,
-  StreakAchievementStep,
-  StreakDayOneCelebration,
-  TerminalLine,
-  TypewriterHeadline,
-  TypewriterText,
+  TransformationPlanStep,
   UnderlineInput,
 } from './onboarding/components';
-import { OB_EASE, OB_SPRING } from './onboarding/motion';
+import {
+  ageBenchmarkLine,
+  COLD_OPEN_LINES,
+  COST_MEMORY_PRESETS,
+  digitalReflectionLines,
+  hoursSliderTier,
+  inferProtectTargetFromGoals,
+  reframeForLog,
+  type ProtectTarget,
+} from './onboarding/copy';
+import { OB_EASE, OB_SLIDE_OFFSET, OB_TRANSITION_MS } from './onboarding/motion';
 import {
   AGE_BRACKETS,
   APP_INTENT_OPTIONS,
+  LIFE_GOAL_OPTIONS,
+  LIFE_OBSTACLE_OPTIONS,
+  LOVED_TIME_FREQUENCY_OPTIONS,
+  MIND_GOAL_OPTIONS,
+  PHONE_RELATIONSHIP_OPTIONS,
+  SELF_RELATIONSHIP_OPTIONS,
   DEVICE_POSITION_OPTIONS,
   FOCUS_VULNERABILITY_OPTIONS,
+  PHONE_PICKUP_OPTIONS,
   formatHoursDisplay,
   HOURS_DEFAULT,
   HOURS_MAX,
   HOURS_MIN,
   HOURS_STEP,
   hoursCaption,
-  impactStats,
   OB,
+  OB_FONTS,
   reclaimHoursGoal,
   selectedShieldTargets,
   SHIELD_TARGETS,
   spacing,
   TOTAL_ONBOARDING_STEPS,
   unrot,
-  unrotFonts,
   type ShieldTargetId,
 } from './onboarding/tokens';
 
 type Props = { onDone: () => void };
 
 type OnboardingAnswers = {
+  mindGoals: string[];
+  lifeGoals: string[];
+  lovedTimeFrequency: string | null;
+  phoneRelationship: string | null;
+  selfRelationship: string | null;
+  lifeObstacles: string[];
   appIntent: string[];
   focusVulnerability: string | null;
   devicePosition: string | null;
   triggers: string[];
+  protectTarget: ProtectTarget | null;
   phonePickups: string | null;
   reclaimedFocus: string | null;
   commitment: string | null;
 };
 
+const COLD_OPEN_END = 3;
+const AUTO_ADVANCE_STEPS = new Set([0, 1, 2]);
+const HOURS_STEP_INDEX = 5;
+const IMPACT_STEP_INDEX = 6;
+const RECLAIM_STEP_INDEX = 7;
+const MIND_GOALS_STEP_INDEX = 8;
+const LIFE_GOALS_STEP_INDEX = 9;
+const MIND_GOALS_RECAP_STEP_INDEX = 10;
+const LOVED_TIME_STEP_INDEX = 11;
+const PHONE_RELATIONSHIP_STEP_INDEX = 12;
+const SELF_RELATIONSHIP_STEP_INDEX = 13;
+const LIFE_OBSTACLES_STEP_INDEX = 14;
+const PROFILE_RECAP_STEP_INDEX = 15;
+const LOG_BUTTON_STEP_INDEX = 24;
+const LOG_PRACTICE_STEP_INDEX = 25;
+const FIRST_LOG_CELEBRATION_STEP_INDEX = 26;
+const STREAK_REVEAL_STEP_INDEX = 27;
+const BUILDING_FRAMEWORK_STEP_INDEX = 28;
+const TRANSFORMATION_PLAN_STEP_INDEX = 30;
+const FREE_TRIAL_PITCH_STEP_INDEX = 31;
+const COMMITMENT_STEP_INDEX = 32;
+const LOCK_IN_STEP_INDEX = 33;
+const SCREEN_TIME_CONNECT_STEP_INDEX = 35;
+const NOTIFICATIONS_CONNECT_STEP_INDEX = 36;
+const FREE_TRIAL_REMINDER_STEP_INDEX = 37;
+const FREE_TRIAL_START_STEP_INDEX = 38;
+
 function footerLabel(step: number): string {
   const map: Record<number, string> = {
-    0: 'START',
-    18: 'TRY IT NOW',
-    19: 'LOG TO UNLOCK',
-    21: 'KEEP THE STREAK',
-    23: 'VIEW MY PROFILE',
-    27: 'ENTER THE UNROT',
+    23: 'GET STARTED',
+    27: 'KEEP THE STREAK',
   };
   return map[step] ?? 'NEXT';
-}
-
-function primaryFeeling(answers: OnboardingAnswers): string {
-  if (answers.appIntent.some((i) => i.includes('Passive entertainment'))) return 'numb';
-  if (answers.appIntent.some((i) => i.includes('Connecting with friends'))) return 'disconnected';
-  if (answers.appIntent.some((i) => i.includes('Seeking information'))) return 'restless';
-  return 'restless';
-}
-
-function primaryTrigger(triggers: string[]): string {
-  if (triggers.length === 0) return 'boredom';
-  return triggers[0].toLowerCase();
-}
-
-function ProjectionChart() {
-  const w = 280;
-  const h = 120;
-  const drift = 'M8,20 L60,35 L110,55 L160,72 L210,88 L272,98';
-  const guard = 'M8,98 L60,82 L110,62 L160,45 L210,28 L272,12';
-
-  return (
-    <View style={styles.chartBox}>
-      <Svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`}>
-        <Path d={drift} stroke={OB.secondary} strokeWidth={2} fill="none" />
-        <Path d={guard} stroke={OB.ink} strokeWidth={2} fill="none" />
-      </Svg>
-    </View>
-  );
-}
-
-function ShieldMock() {
-  const cardY = useRef(new Animated.Value(18)).current;
-  const cardOpacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    cardY.setValue(18);
-    cardOpacity.setValue(0);
-    Animated.parallel([
-      Animated.spring(cardY, { toValue: 0, ...OB_SPRING.reveal }),
-      Animated.timing(cardOpacity, { toValue: 1, duration: 480, easing: OB_EASE, useNativeDriver: true }),
-    ]).start();
-  }, [cardOpacity, cardY]);
-
-  return (
-    <View style={styles.shieldStage}>
-      <View style={styles.shieldWireframe} />
-      <Animated.View style={[styles.shieldCard, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
-        <Text style={styles.shieldLabel}>[ INTERCEPT: UNROT LOCK ACTIVE ]</Text>
-      </Animated.View>
-    </View>
-  );
 }
 
 export function OnboardingFlow({ onDone }: Props) {
@@ -150,13 +155,21 @@ export function OnboardingFlow({ onDone }: Props) {
   const [age, setAge] = useState('');
   const [hoursValue, setHoursValue] = useState(HOURS_DEFAULT);
   const [sliderInteracted, setSliderInteracted] = useState(false);
-  const [loadingLine, setLoadingLine] = useState(0);
+  const [costMemory, setCostMemory] = useState('');
+  const [costPreset, setCostPreset] = useState<string | null>(null);
   const [selectedTargets, setSelectedTargets] = useState<ShieldTargetId[]>([]);
   const [answers, setAnswers] = useState<OnboardingAnswers>({
+    mindGoals: [],
+    lifeGoals: [],
+    lovedTimeFrequency: null,
+    phoneRelationship: null,
+    selfRelationship: null,
+    lifeObstacles: [],
     appIntent: [],
     focusVulnerability: null,
     devicePosition: null,
     triggers: [],
+    protectTarget: null,
     phonePickups: null,
     reclaimedFocus: null,
     commitment: null,
@@ -165,17 +178,37 @@ export function OnboardingFlow({ onDone }: Props) {
   const highlightedTargets = useMemo(() => selectedShieldTargets(selectedTargets), [selectedTargets]);
 
   const contentOpacity = useRef(new Animated.Value(1)).current;
-  const contentY = useRef(new Animated.Value(0)).current;
-  const contentScale = useRef(new Animated.Value(1)).current;
+  const contentX = useRef(new Animated.Value(0)).current;
   const progressAnim = useRef(new Animated.Value(1 / TOTAL_ONBOARDING_STEPS)).current;
   const stepTransitionSkip = useRef(true);
-  const hoursPulse = useRef(new Animated.Value(1)).current;
+  const transitioningRef = useRef(false);
+  const sliderTierRef = useRef(hoursSliderTier(HOURS_DEFAULT));
 
   const trimmedName = name.trim() || 'friend';
-  const { daysYear, yearsLife } = impactStats(hoursValue);
   const reclaimGoal = reclaimHoursGoal(hoursValue);
-  const isLogStep = step === 20;
-  const isPaywallStep = step === TOTAL_ONBOARDING_STEPS - 1;
+  const reflectionLines = useMemo(
+    () =>
+      digitalReflectionLines({
+        hours: formatHoursDisplay(hoursValue),
+        appIntent: answers.appIntent,
+        focusVulnerability: answers.focusVulnerability,
+        selfRelationship: answers.selfRelationship,
+        phoneRelationship: answers.phoneRelationship,
+      }),
+    [hoursValue, answers.appIntent, answers.focusVulnerability, answers.selfRelationship, answers.phoneRelationship],
+  );
+  const isLogStep = step === LOG_PRACTICE_STEP_INDEX;
+  const hideLogButtonFooter = step === LOG_BUTTON_STEP_INDEX;
+  const hideBuildingFrameworkFooter = step === BUILDING_FRAMEWORK_STEP_INDEX;
+  const hideTransformationPlanFooter = step === TRANSFORMATION_PLAN_STEP_INDEX;
+  const hideFreeTrialPitchFooter = step === FREE_TRIAL_PITCH_STEP_INDEX;
+  const hideCommitmentFooter = step === COMMITMENT_STEP_INDEX;
+  const hideLockInFooter = step === LOCK_IN_STEP_INDEX;
+  const hideScreenTimeConnectFooter = step === SCREEN_TIME_CONNECT_STEP_INDEX;
+  const hideNotificationsConnectFooter = step === NOTIFICATIONS_CONNECT_STEP_INDEX;
+  const hideFreeTrialReminderFooter = step === FREE_TRIAL_REMINDER_STEP_INDEX;
+  const hideFreeTrialStartFooter = step === FREE_TRIAL_START_STEP_INDEX;
+  const hideProgress = step <= COLD_OPEN_END || isLogStep;
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -192,59 +225,52 @@ export function OnboardingFlow({ onDone }: Props) {
       return;
     }
     contentOpacity.setValue(0);
-    contentY.setValue(14);
-    contentScale.setValue(0.968);
+    contentX.setValue(OB_SLIDE_OFFSET);
     Animated.parallel([
-      Animated.timing(contentOpacity, { toValue: 1, duration: 360, easing: OB_EASE, useNativeDriver: true }),
-      Animated.spring(contentY, { toValue: 0, ...OB_SPRING.reveal }),
-      Animated.spring(contentScale, { toValue: 1, ...OB_SPRING.reveal }),
+      Animated.timing(contentOpacity, { toValue: 1, duration: OB_TRANSITION_MS, easing: OB_EASE, useNativeDriver: true }),
+      Animated.timing(contentX, { toValue: 0, duration: OB_TRANSITION_MS, easing: OB_EASE, useNativeDriver: true }),
     ]).start();
-  }, [step, contentOpacity, contentY, contentScale]);
+  }, [step, contentOpacity, contentX]);
 
   useEffect(() => {
-    if (step !== 6) return;
-    Animated.sequence([
-      Animated.spring(hoursPulse, { toValue: 1.06, ...OB_SPRING.snap }),
-      Animated.spring(hoursPulse, { toValue: 1, ...OB_SPRING.snap }),
-    ]).start();
-  }, [hoursPulse, hoursValue, step]);
-
-  useEffect(() => {
-    if (step !== 22) return;
-    void (async () => {
-      try {
-        const StoreReview = require('expo-store-review') as {
-          isAvailableAsync?: () => Promise<boolean>;
-          requestReview?: () => Promise<void>;
-        };
-        if (StoreReview.isAvailableAsync && (await StoreReview.isAvailableAsync())) {
-          await StoreReview.requestReview?.();
-        }
-      } catch {
-        /* optional native module */
-      }
-    })();
-  }, [step]);
-
-  useEffect(() => {
-    if (step !== 23) {
-      setLoadingLine(0);
-      return;
-    }
-    const lines = 3;
-    let i = 0;
-    const t = setInterval(() => {
-      i += 1;
-      setLoadingLine(i);
-      if (i >= lines) clearInterval(t);
-    }, 900);
-    return () => clearInterval(t);
-  }, [step]);
+    if (step !== HOURS_STEP_INDEX) return;
+    sliderTierRef.current = hoursSliderTier(hoursValue);
+  }, [hoursValue, step]);
 
   const toggleShieldTarget = (id: ShieldTargetId) => {
     setSelectedTargets((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id],
     );
+  };
+
+  const toggleMindGoal = (label: string) => {
+    setAnswers((a) => {
+      const on = a.mindGoals.includes(label);
+      return {
+        ...a,
+        mindGoals: on ? a.mindGoals.filter((t) => t !== label) : [...a.mindGoals, label],
+      };
+    });
+  };
+
+  const toggleLifeGoal = (label: string) => {
+    setAnswers((a) => {
+      const on = a.lifeGoals.includes(label);
+      return {
+        ...a,
+        lifeGoals: on ? a.lifeGoals.filter((t) => t !== label) : [...a.lifeGoals, label],
+      };
+    });
+  };
+
+  const toggleLifeObstacle = (label: string) => {
+    setAnswers((a) => {
+      const on = a.lifeObstacles.includes(label);
+      return {
+        ...a,
+        lifeObstacles: on ? a.lifeObstacles.filter((t) => t !== label) : [...a.lifeObstacles, label],
+      };
+    });
   };
 
   const toggleAppIntent = (label: string) => {
@@ -257,82 +283,84 @@ export function OnboardingFlow({ onDone }: Props) {
     });
   };
 
-  const toggleTrigger = (label: string) => {
-    setAnswers((a) => {
-      const on = a.triggers.includes(label);
-      return {
-        ...a,
-        triggers: on ? a.triggers.filter((t) => t !== label) : [...a.triggers, label],
-      };
-    });
-  };
-
   const canContinue = useCallback((): boolean => {
     switch (step) {
-      case 0:
-        return true;
-      case 4:
+      case 3:
         return name.trim().length > 0;
-      case 5:
+      case 4:
         return age.length > 0;
-      case 6:
-        return sliderInteracted && hoursValue >= HOURS_MIN;
-      case 9:
-        return selectedTargets.length > 0;
-      case 10:
-        return answers.appIntent.length > 0;
-      case 11:
-        return answers.focusVulnerability != null;
-      case 12:
-        return answers.devicePosition != null;
-      case 13:
-        return answers.triggers.length > 0;
-      case 15:
-        return answers.phonePickups != null;
+      case 5:
+        return hoursValue >= HOURS_MIN;
+      case MIND_GOALS_STEP_INDEX:
+        return answers.mindGoals.length > 0;
+      case LIFE_GOALS_STEP_INDEX:
+        return answers.lifeGoals.length > 0;
+      case LOVED_TIME_STEP_INDEX:
+        return answers.lovedTimeFrequency != null;
+      case PHONE_RELATIONSHIP_STEP_INDEX:
+        return answers.phoneRelationship != null;
+      case SELF_RELATIONSHIP_STEP_INDEX:
+        return answers.selfRelationship != null;
+      case LIFE_OBSTACLES_STEP_INDEX:
+        return answers.lifeObstacles.length > 0;
       case 16:
-        return answers.reclaimedFocus != null;
-      case 23:
-        return loadingLine >= 3;
-      case 25:
+        return selectedTargets.length > 0;
+      case 17:
+        return answers.appIntent.length > 0;
+      case 18:
+        return answers.focusVulnerability != null;
+      case 19:
+        return answers.devicePosition != null;
+      case 20:
+        return answers.phonePickups != null;
+      case 32:
         return answers.commitment != null;
       default:
         return true;
     }
-  }, [step, name, age, sliderInteracted, hoursValue, answers, selectedTargets, loadingLine]);
+  }, [step, name, age, sliderInteracted, hoursValue, costPreset, costMemory, answers, selectedTargets]);
+
+  const transitionToStep = useCallback(
+    async (nextStep: number) => {
+      if (nextStep === step || transitioningRef.current) return;
+      transitioningRef.current = true;
+
+      try {
+        await new Promise<void>((resolve) => {
+          Animated.parallel([
+            Animated.timing(contentOpacity, { toValue: 0, duration: OB_TRANSITION_MS, easing: OB_EASE, useNativeDriver: true }),
+            Animated.timing(contentX, { toValue: -OB_SLIDE_OFFSET, duration: OB_TRANSITION_MS, easing: OB_EASE, useNativeDriver: true }),
+          ]).start(({ finished }) => {
+            if (finished) resolve();
+          });
+        });
+
+        setStep(nextStep);
+      } finally {
+        transitioningRef.current = false;
+      }
+    },
+    [step, contentOpacity, contentX],
+  );
 
   const transitionToNextStep = useCallback(async () => {
     if (step >= TOTAL_ONBOARDING_STEPS - 1) return;
+    await transitionToStep(step + 1);
+  }, [step, transitionToStep]);
 
-    await new Promise<void>((resolve) => {
-      Animated.parallel([
-        Animated.timing(contentOpacity, { toValue: 0, duration: 180, easing: OB_EASE, useNativeDriver: true }),
-        Animated.timing(contentY, { toValue: -12, duration: 180, easing: OB_EASE, useNativeDriver: true }),
-        Animated.timing(contentScale, { toValue: 0.982, duration: 180, easing: OB_EASE, useNativeDriver: true }),
-      ]).start(({ finished }) => {
-        if (finished) resolve();
-      });
-    });
-
-    setStep((s) => s + 1);
-  }, [step, contentOpacity, contentScale, contentY]);
+  const advanceColdOpenOnTap = useCallback(() => {
+    if (!AUTO_ADVANCE_STEPS.has(step)) return;
+    void transitionToNextStep();
+  }, [step, transitionToNextStep]);
 
   const completeLogStep = useCallback(async () => {
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     await transitionToNextStep();
   }, [transitionToNextStep]);
 
   const goNext = async () => {
     if (!canContinue()) return;
-    const milestone = step === 7 || step === 21 || step === 27;
-    if (milestone) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } else {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
 
-    if (step === 6) {
+    if (step === HOURS_STEP_INDEX) {
       await saveOnboardingProfile({
         name: trimmedName,
         age: age.trim(),
@@ -346,7 +374,6 @@ export function OnboardingFlow({ onDone }: Props) {
   };
 
   const finishOnboarding = async () => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     await setOnboardingComplete();
     onDone();
   };
@@ -356,40 +383,32 @@ export function OnboardingFlow({ onDone }: Props) {
       case 0:
         return (
           <View style={styles.welcomeCenter}>
-            <TypewriterHeadline text="Hey." active={step === 0} style={styles.heyHeadline} />
-            <Gap h={16} />
-            <FadeInText text="Your time is slipping away quietly." delayMs={900} />
+            <FadeInHeadline text="Hey." />
           </View>
         );
       case 1:
         return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>Where does the day go?</SerifQuestion>
-            <InsightLight>
-              Modern algorithms are explicitly engineered to capture your focus and trade it for ad revenue.
-            </InsightLight>
+          <StepShell stepKey={step} gap={20} stagger={false}>
+            <Text style={styles.coldOpenBold}>
+              Ever feel like your phone gets more attention than you?
+            </Text>
+            <Text style={styles.coldOpenSimple}>You&apos;re not alone.</Text>
+            <Text style={styles.coldOpenSimple}>Distractions are everywhere</Text>
+            <Text style={styles.coldOpenSimple}>
+              Quietly pulling you away from the peace you&apos;re looking for.
+            </Text>
           </StepShell>
         );
       case 2:
         return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>Why can&apos;t you just look away?</SerifQuestion>
-            <InsightLight>
-              Because willpower cannot defeat a machine that updates its strategy every single time you swipe.
-            </InsightLight>
+          <StepShell stepKey={step} gap={20} stagger={false}>
+            <Text style={styles.coldOpenBold}>UNROT helps you put YOU first</Text>
+            <Text style={styles.coldOpenSimple}>It&apos;s simple</Text>
+            <Text style={styles.coldOpenSimple}>everyday</Text>
+            <Text style={styles.coldOpenSimple}>you log to unlock your social media apps</Text>
           </StepShell>
         );
       case 3:
-        return (
-          <StepShell stepKey={step} gap={20}>
-            <SerifQuestion>What is UNROT?</SerifQuestion>
-            <Text style={styles.bodyInkRegular}>
-              A physical circuit breaker for your habits. Your chosen entertainment apps are completely shielded
-              until you complete a conscious reflection ritual.
-            </Text>
-          </StepShell>
-        );
-      case 4:
         return (
           <StepShell stepKey={step} gap={32}>
             <SerifQuestion>What should we call you?</SerifQuestion>
@@ -403,10 +422,10 @@ export function OnboardingFlow({ onDone }: Props) {
             <Text style={styles.microHint}>PRESS NEXT TO COMMIT</Text>
           </StepShell>
         );
-      case 5:
+      case 4:
         return (
-          <StepShell stepKey={step} gap={28}>
-            <SerifQuestion>Select your age bracket, {trimmedName}.</SerifQuestion>
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>How old are you, {trimmedName}?</OnboardingChoiceHeading>
             <View style={styles.ageGrid}>
               {AGE_BRACKETS.map((opt) => (
                 <AgeChoiceButton
@@ -419,14 +438,12 @@ export function OnboardingFlow({ onDone }: Props) {
             </View>
           </StepShell>
         );
-      case 6:
+      case HOURS_STEP_INDEX:
         return (
           <StepShell stepKey={step} gap={36}>
-            <SerifQuestion>Be completely honest.</SerifQuestion>
+            <Text style={styles.coldOpenBold}>How long are you on your phone each day?</Text>
             <View style={styles.hoursBlock}>
-              <Animated.Text style={[styles.hoursBig, { transform: [{ scale: hoursPulse }] }]}>
-                {formatHoursDisplay(hoursValue)}
-              </Animated.Text>
+              <Text style={styles.hoursBig}>{formatHoursDisplay(hoursValue)}</Text>
               <Text style={styles.hoursUnit}>HOURS / DAY SCROLLING</Text>
               <Slider
                 style={styles.slider}
@@ -437,10 +454,14 @@ export function OnboardingFlow({ onDone }: Props) {
                 onValueChange={(v) => {
                   setHoursValue(v);
                   if (!sliderInteracted) setSliderInteracted(true);
+                  const tier = hoursSliderTier(v);
+                  if (tier !== sliderTierRef.current) {
+                    sliderTierRef.current = tier;
+                    void Haptics.selectionAsync();
+                  }
                 }}
                 onSlidingComplete={() => {
                   setSliderInteracted(true);
-                  void Haptics.selectionAsync();
                 }}
                 minimumTrackTintColor={OB.ink}
                 maximumTrackTintColor={OB.track}
@@ -451,31 +472,144 @@ export function OnboardingFlow({ onDone }: Props) {
             </View>
           </StepShell>
         );
-      case 7:
+      case IMPACT_STEP_INDEX:
+        return <PhoneTimeImpactStep stepKey={step} name={trimmedName} hoursPerDay={hoursValue} />;
+      case RECLAIM_STEP_INDEX:
         return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>The cost of tracking glass.</SerifQuestion>
-            <ImpactHeroCard daysYear={daysYear} yearsLife={yearsLife} />
+          <StepShell stepKey={step} gap={20} stagger={false}>
+            <Text style={styles.coldOpenBold}>it doesn&apos;t have to be this way</Text>
+            <Text style={styles.coldOpenBold}>do you want to reclaim your life?</Text>
+            <Text style={styles.coldOpenSimple}>let&apos;s build a plan for you</Text>
           </StepShell>
         );
-      case 8:
+      case MIND_GOALS_STEP_INDEX:
         return (
-          <StepShell stepKey={step} gap={20}>
-            <SerifQuestion>It does not have to be this way.</SerifQuestion>
-            <InsightLight>
-              We are going to build a personalized boundary system to protect your time. Let&apos;s audit your
-              primary sources of screen rot.
-            </InsightLight>
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading kicker="I want to..">What&apos;s on your mind?</OnboardingChoiceHeading>
+            <ChoiceStack stepKey={step}>
+              {MIND_GOAL_OPTIONS.map((o) => (
+                <MultiChoiceRow
+                  key={o}
+                  label={o}
+                  selected={answers.mindGoals.includes(o)}
+                  onPress={() => toggleMindGoal(o)}
+                />
+              ))}
+            </ChoiceStack>
           </StepShell>
         );
-      case 9:
+      case LIFE_GOALS_STEP_INDEX:
+        return (
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>what are your life goals?</OnboardingChoiceHeading>
+            <ChoiceStack stepKey={step}>
+              {LIFE_GOAL_OPTIONS.map((o) => (
+                <MultiChoiceRow
+                  key={o}
+                  label={o}
+                  selected={answers.lifeGoals.includes(o)}
+                  onPress={() => toggleLifeGoal(o)}
+                />
+              ))}
+            </ChoiceStack>
+          </StepShell>
+        );
+      case MIND_GOALS_RECAP_STEP_INDEX:
+        return (
+          <MindGoalsRecapStep
+            stepKey={step}
+            selections={MIND_GOAL_OPTIONS.filter((o) => answers.mindGoals.includes(o))}
+          />
+        );
+      case LOVED_TIME_STEP_INDEX:
+        return (
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading kicker="Be honest...">
+              How often do you spend uninterrupted time doing something you love (not scrolling)?
+            </OnboardingChoiceHeading>
+            <ChoiceStack stepKey={step}>
+              {LOVED_TIME_FREQUENCY_OPTIONS.map((o) => (
+                <ChoiceRow
+                  key={o}
+                  label={o}
+                  selected={answers.lovedTimeFrequency === o}
+                  onPress={() => setAnswers((a) => ({ ...a, lovedTimeFrequency: o }))}
+                />
+              ))}
+            </ChoiceStack>
+          </StepShell>
+        );
+      case PHONE_RELATIONSHIP_STEP_INDEX:
+        return (
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>
+              and how would you describe your relationship with your phone?
+            </OnboardingChoiceHeading>
+            <ChoiceStack stepKey={step}>
+              {PHONE_RELATIONSHIP_OPTIONS.map((o) => (
+                <ChoiceRow
+                  key={o}
+                  label={o}
+                  selected={answers.phoneRelationship === o}
+                  onPress={() => setAnswers((a) => ({ ...a, phoneRelationship: o }))}
+                />
+              ))}
+            </ChoiceStack>
+          </StepShell>
+        );
+      case SELF_RELATIONSHIP_STEP_INDEX:
+        return (
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>
+              How would you describe your relationship with yourself?
+            </OnboardingChoiceHeading>
+            <ChoiceStack stepKey={step}>
+              {SELF_RELATIONSHIP_OPTIONS.map((o) => (
+                <ChoiceRow
+                  key={o}
+                  label={o}
+                  selected={answers.selfRelationship === o}
+                  onPress={() => setAnswers((a) => ({ ...a, selfRelationship: o }))}
+                />
+              ))}
+            </ChoiceStack>
+          </StepShell>
+        );
+      case LIFE_OBSTACLES_STEP_INDEX:
+        return (
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>
+              what&apos;s the main thing that gets in the way of the life you want?
+            </OnboardingChoiceHeading>
+            <ChoiceStack stepKey={step}>
+              {LIFE_OBSTACLE_OPTIONS.map((o) => (
+                <MultiChoiceRow
+                  key={o}
+                  label={o}
+                  selected={answers.lifeObstacles.includes(o)}
+                  onPress={() => toggleLifeObstacle(o)}
+                />
+              ))}
+            </ChoiceStack>
+          </StepShell>
+        );
+      case PROFILE_RECAP_STEP_INDEX:
+        return (
+          <ProfileRecapStep
+            stepKey={step}
+            name={trimmedName}
+            selfRelationship={answers.selfRelationship}
+            lifeObstacles={LIFE_OBSTACLE_OPTIONS.filter((o) => answers.lifeObstacles.includes(o))}
+          />
+        );
+      case 16:
         return (
           <StepShell stepKey={step}>
             <SerifQuestion>Where is your attention directed?</SerifQuestion>
             <Gap h={16} />
             <Text style={styles.discoverySubtitle}>
-              Select the primary platforms you wish to shield. We will customize your reflection baseline around
-              these choices.
+              Select the primary platforms you wish to shield. We will customize your reflection baseline around these
+              choices.
             </Text>
             <Gap h={24} />
             <StaggerChipGrid stepKey={step}>
@@ -486,18 +620,17 @@ export function OnboardingFlow({ onDone }: Props) {
                   brand={t.brand}
                   selected={selectedTargets.includes(t.id)}
                   onPress={() => toggleShieldTarget(t.id)}
+                  hapticOnSelect
                 />
               ))}
             </StaggerChipGrid>
           </StepShell>
         );
-      case 10:
+      case 17:
         return (
-          <StepShell stepKey={step}>
-            <SerifQuestion>What do you mainly use these apps for?</SerifQuestion>
-            <Gap h={16} />
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>What do you mainly use these apps for?</OnboardingChoiceHeading>
             <SelectedTargetIcons targets={highlightedTargets} />
-            <Gap h={16} />
             <ChoiceStack stepKey={step}>
               {APP_INTENT_OPTIONS.map((o) => (
                 <MultiChoiceRow
@@ -510,16 +643,10 @@ export function OnboardingFlow({ onDone }: Props) {
             </ChoiceStack>
           </StepShell>
         );
-      case 11:
+      case 18:
         return (
-          <StepShell stepKey={step}>
-            <SerifQuestion>When do you find it hardest to focus?</SerifQuestion>
-            <Gap h={16} />
-            <Text style={styles.discoverySubtitle}>
-              Identifying your specific focus vulnerability helps the intercept engine calculate your optimal pass
-              window durations.
-            </Text>
-            <Gap h={16} />
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>When do you find it hardest to focus?</OnboardingChoiceHeading>
             <ChoiceStack stepKey={step}>
               {FOCUS_VULNERABILITY_OPTIONS.map((o) => (
                 <ChoiceRow
@@ -532,15 +659,12 @@ export function OnboardingFlow({ onDone }: Props) {
             </ChoiceStack>
           </StepShell>
         );
-      case 12:
+      case 19:
         return (
-          <StepShell stepKey={step}>
-            <SerifQuestion>Where is your device usually positioned when working?</SerifQuestion>
-            <Gap h={16} />
-            <Text style={styles.discoverySubtitle}>
-              Physical proximity dictating reflex-based picking is the primary driver of device checking cycles.
-            </Text>
-            <Gap h={16} />
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>
+              Where do you usually keep your phone while working/studying?
+            </OnboardingChoiceHeading>
             <ChoiceStack stepKey={step}>
               {DEVICE_POSITION_OPTIONS.map((o) => (
                 <ChoiceRow
@@ -553,38 +677,12 @@ export function OnboardingFlow({ onDone }: Props) {
             </ChoiceStack>
           </StepShell>
         );
-      case 13:
+      case 20:
         return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>When is your urge to scroll strongest?</SerifQuestion>
+          <StepShell stepKey={step} gap={ONBOARDING_CHOICE_GAP}>
+            <OnboardingChoiceHeading>How many times a day do you pick up your phone?</OnboardingChoiceHeading>
             <ChoiceStack stepKey={step}>
-              {['Right after waking up', 'During working hours', 'To avoid stress or boredom'].map((o) => (
-                <MultiChoiceRow
-                  key={o}
-                  label={o}
-                  selected={answers.triggers.includes(o)}
-                  onPress={() => toggleTrigger(o)}
-                />
-              ))}
-            </ChoiceStack>
-          </StepShell>
-        );
-      case 14:
-        return (
-          <StepShell stepKey={step} gap={28} stagger={false}>
-            <SerifQuestion>Your digital reflection.</SerifQuestion>
-            <TypewriterText
-              active={step === 14}
-              text={`You scroll for ${formatHoursDisplay(hoursValue)} hours a day primarily to escape ${primaryTrigger(answers.triggers)}, frequently leaving you feeling ${primaryFeeling(answers)}.`}
-            />
-          </StepShell>
-        );
-      case 15:
-        return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>How many times a day do you pick up your phone without a clear goal?</SerifQuestion>
-            <ChoiceStack stepKey={step}>
-              {['20 - 50 times', '50 - 100 times', 'Over 100 times'].map((o) => (
+              {PHONE_PICKUP_OPTIONS.map((o) => (
                 <ChoiceRow
                   key={o}
                   label={o}
@@ -595,180 +693,173 @@ export function OnboardingFlow({ onDone }: Props) {
             </ChoiceStack>
           </StepShell>
         );
-      case 16:
-        return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>What do you plan to do with your reclaimed focus?</SerifQuestion>
-            <ChoiceStack stepKey={step}>
-              {['Creative work', 'Deep mental clarity', 'Physical presence'].map((o) => (
-                <ChoiceRow
-                  key={o}
-                  label={o}
-                  selected={answers.reclaimedFocus === o}
-                  onPress={() => setAnswers((a) => ({ ...a, reclaimedFocus: o }))}
-                />
-              ))}
-            </ChoiceStack>
-          </StepShell>
-        );
-      case 17:
-        return (
-          <StepShell stepKey={step} gap={20}>
-            <SerifQuestion>The projection of attention.</SerifQuestion>
-            <ProjectionChart />
-          </StepShell>
-        );
-      case 18:
-        return (
-          <StepShell stepKey={step} gap={16}>
-            <SerifQuestion>Your profile is calculated.</SerifQuestion>
-            <InsightLight>Now, let&apos;s practice the exact mechanism that will guard your time.</InsightLight>
-          </StepShell>
-        );
-      case 19:
-        return <ShieldMock />;
       case 21:
-        return <StreakDayOneCelebration stepKey={step} />;
-      case 22:
-        return <StreakAchievementStep stepKey={step} />;
-      case 23:
         return (
-          <View style={styles.loadingStep}>
-            <ActivityIndicator color={OB.ink} size="large" />
-            <Gap h={32} />
-            <TerminalLine
-              visible={loadingLine >= 1}
-              text="[ CALCULATING RECLAIMED TARGETS... SUCCESS ]"
-            />
-            <TerminalLine
-              visible={loadingLine >= 2}
-              text="[ APPORTIONING PASS INTERVAL WINDOWS... DONE ]"
-            />
-            <TerminalLine
-              visible={loadingLine >= 3}
-              text="[ DEPLOYING FAMILY CONTROLS DEVICE SHIELDS... READY ]"
-            />
-          </View>
+          <DigitalReflectionStep
+            stepKey={step}
+            active={step === 21}
+            scrollHours={reflectionLines.scrollHours}
+            escape={reflectionLines.escape}
+            feeling={reflectionLines.feeling}
+          />
         );
+      case 22:
+        return <AttentionLifeStep stepKey={step} active={step === 22} />;
+      case 23:
+        return <HowItWorksStep stepKey={step} />;
       case 24:
         return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>Your customized blueprint.</SerifQuestion>
-            <BlueprintSummaryCard reclaimGoal={reclaimGoal} />
-          </StepShell>
-        );
-      case 25:
-        return (
-          <StepShell stepKey={step} gap={28}>
-            <SerifQuestion>How committed are you to protecting your remaining focus?</SerifQuestion>
-            <ChoiceStack stepKey={step} loose>
-              {[
-                'Highly committed. I need my life back.',
-                'Just testing it out.',
-              ].map((o) => (
-                <ChoiceRow
-                  key={o}
-                  label={o}
-                  selected={answers.commitment === o}
-                  onPress={() => setAnswers((a) => ({ ...a, commitment: o }))}
-                />
-              ))}
-            </ChoiceStack>
-          </StepShell>
+          <LogButtonIntroStep
+            stepKey={step}
+            onHoldComplete={() => void transitionToStep(LOG_PRACTICE_STEP_INDEX)}
+          />
         );
       case 26:
-        return (
-          <StepShell stepKey={step} gap={24}>
-            <SerifQuestion>A matter of value.</SerifQuestion>
-            <View style={styles.compareCard}>
-              <View style={styles.compareRow}>
-                <Text style={styles.compareLeft}>Single commercial coffee ($9.99)</Text>
-                <Text style={styles.compareRight}>One month of absolute mental sovereignty ($9.99)</Text>
-              </View>
-              <View style={[styles.compareRow, { marginTop: 16 }]}>
-                <Text style={styles.compareLeftSub}>15 minutes of artificial energy.</Text>
-                <Text style={styles.compareRightSub}>Hundreds of hours of pure focus returned to you.</Text>
-              </View>
-            </View>
-          </StepShell>
-        );
+        return <FirstLogCelebrationStep stepKey={step} />;
       case 27:
-        return (
-          <StepShell stepKey={step} gap={20}>
-            <SerifQuestion>The system is fully calibrated, {trimmedName}.</SerifQuestion>
-            <BodyRegular>
-              Your shields are ready for deployment. The gates are set. Your focus belongs entirely to you.
-            </BodyRegular>
-          </StepShell>
-        );
+        return <DayOneStreakRevealStep stepKey={step} />;
       case 28:
         return (
-          <View style={styles.paywall}>
-            <Text style={styles.payBanner}>[ 2,400,000 MINUTES OF ROT PREVENTED WORLDWIDE ]</Text>
-            <Gap h={24} />
-            <Text style={styles.reviewQuote}>
-              &ldquo;UNROT finally made me pause before opening TikTok. Game changer.&rdquo;
-            </Text>
-            <Gap h={12} />
-            <Text style={styles.reviewQuote}>
-              &ldquo;The log ritual is short but it actually breaks the trance.&rdquo;
-            </Text>
-            <Gap h={12} />
-            <Text style={styles.reviewQuote}>
-              &ldquo;Worth every penny for the hours I got back.&rdquo;
-            </Text>
-            <Gap h={24} />
-            <Pressable style={styles.planCard} onPress={() => void finishOnboarding()}>
-              <Text style={styles.planLabel}>Weekly</Text>
-              <Text style={styles.planPrice}>$9.99 / week</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.planCard, styles.planCardEmphasis]}
-              onPress={() => void finishOnboarding()}
-            >
-              <Text style={styles.planBadge}>Common pick</Text>
-              <Text style={styles.planLabel}>Monthly</Text>
-              <Text style={styles.planPrice}>$39.99 / month</Text>
-            </Pressable>
-            <Pressable style={styles.activateBtn} onPress={() => void finishOnboarding()}>
-              <Text style={styles.activateBtnLabel}>ACTIVATE MY SHIELDS</Text>
-            </Pressable>
-            <Text style={styles.legal}>
-              Subscription renews automatically. Cancel anytime in Settings. Terms and privacy apply.
-            </Text>
-            <Pressable onPress={() => void finishOnboarding()} style={styles.skipBtn}>
-              <Text style={styles.skipText}>Maybe later</Text>
-            </Pressable>
-          </View>
+          <BuildingFrameworkStep
+            stepKey={step}
+            onComplete={() => void transitionToNextStep()}
+          />
+        );
+      case 29:
+        return <PlanReadyStep stepKey={step} name={trimmedName} />;
+      case 30:
+        return (
+          <TransformationPlanStep
+            stepKey={step}
+            name={trimmedName}
+            mindGoals={answers.mindGoals}
+            lifeGoals={answers.lifeGoals}
+            reclaimGoalHours={reclaimGoal}
+            bottomInset={insets.bottom}
+            onBegin={() => void transitionToNextStep()}
+          />
+        );
+      case 31:
+        return (
+          <FreeTrialPitchStep
+            stepKey={step}
+            bottomInset={insets.bottom}
+            onContinue={() => void transitionToNextStep()}
+          />
+        );
+      case 32:
+        return (
+          <CommitmentStep
+            stepKey={step}
+            commitment={answers.commitment}
+            bottomInset={insets.bottom}
+            onSelect={(value) => setAnswers((a) => ({ ...a, commitment: value }))}
+            onContinue={() => void transitionToNextStep()}
+          />
+        );
+      case 33:
+        return (
+          <LockInStep
+            stepKey={step}
+            commitment={answers.commitment}
+            bottomInset={insets.bottom}
+            onContinue={() => {
+              setAnswers((a) => ({
+                ...a,
+                protectTarget:
+                  a.protectTarget ??
+                  inferProtectTargetFromGoals(a.mindGoals, a.lifeGoals),
+              }));
+              void transitionToNextStep();
+            }}
+          />
+        );
+      case 34:
+        return (
+          <PersonalizedSnapshotStep
+            stepKey={step}
+            phoneRelationship={answers.phoneRelationship}
+            hoursPerDay={formatHoursDisplay(hoursValue)}
+            screenTimeCaption={hoursCaption(hoursValue)}
+            commitment={answers.commitment}
+          />
+        );
+      case 35:
+        return (
+          <ScreenTimeConnectStep
+            stepKey={step}
+            bottomInset={insets.bottom}
+            onConnected={() => void transitionToNextStep()}
+          />
+        );
+      case 36:
+        return (
+          <NotificationsConnectStep
+            stepKey={step}
+            bottomInset={insets.bottom}
+            onAllowed={() => void transitionToNextStep()}
+          />
+        );
+      case 37:
+        return (
+          <FreeTrialReminderStep
+            stepKey={step}
+            bottomInset={insets.bottom}
+            onContinue={() => void transitionToNextStep()}
+          />
+        );
+      case 38:
+        return (
+          <FreeTrialStartStep
+            stepKey={step}
+            bottomInset={insets.bottom}
+            onContinue={() => void finishOnboarding()}
+          />
         );
       default:
         return null;
     }
   };
 
+  const showFooter =
+    !AUTO_ADVANCE_STEPS.has(step) &&
+    !isLogStep &&
+    !hideLogButtonFooter &&
+    !hideBuildingFrameworkFooter &&
+    !hideTransformationPlanFooter &&
+    !hideFreeTrialPitchFooter &&
+    !hideCommitmentFooter &&
+    !hideLockInFooter &&
+    !hideScreenTimeConnectFooter &&
+    !hideNotificationsConnectFooter &&
+    !hideFreeTrialReminderFooter &&
+    !hideFreeTrialStartFooter;
+
   return (
     <KeyboardAvoidingView
-      style={[styles.root, { paddingTop: insets.top + 16 }]}
+      style={[styles.root, { paddingTop: isLogStep ? 0 : insets.top + 16 }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={[styles.progressHeader, isLogStep ? styles.progressHeaderLog : null]}>
-        <StepCounter step={step} total={TOTAL_ONBOARDING_STEPS} />
-        <ProgressBar progress={progressAnim} />
-      </View>
+      {!hideProgress ? (
+        <View style={[styles.progressHeader, isLogStep ? styles.progressHeaderLog : null]}>
+          <StepCounter step={step} total={TOTAL_ONBOARDING_STEPS} />
+          <ProgressBar progress={progressAnim} />
+        </View>
+      ) : null}
       {isLogStep ? (
         <Animated.View
           style={[
             styles.logStepWrap,
-            { opacity: contentOpacity, transform: [{ translateY: contentY }, { scale: contentScale }] },
+            { opacity: contentOpacity, transform: [{ translateX: contentX }] },
           ]}
         >
           <ReflectiveLogSurface
-            embedded
-            horizontalBleed={OB.padH}
             purpose="practice"
             targetAppId="onboarding"
             showExit={false}
+            topInset={insets.top}
             bottomInset={insets.bottom}
+            getReframeLine={reframeForLog}
             onComplete={() => void completeLogStep()}
           />
         </Animated.View>
@@ -778,21 +869,34 @@ export function OnboardingFlow({ onDone }: Props) {
             contentContainerStyle={styles.scroll}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            scrollEnabled
           >
             <Animated.View
               style={[
                 styles.bodyWrap,
-                { opacity: contentOpacity, transform: [{ translateY: contentY }, { scale: contentScale }] },
+                hideLogButtonFooter ? styles.bodyWrapLogIntro : null,
+                { opacity: contentOpacity, transform: [{ translateX: contentX }] },
               ]}
             >
-              {renderStep()}
+              {AUTO_ADVANCE_STEPS.has(step) ? (
+                <Pressable
+                  style={styles.coldOpenTap}
+                  onPress={advanceColdOpenOnTap}
+                  accessibilityRole="button"
+                  accessibilityLabel="Continue"
+                >
+                  {renderStep()}
+                </Pressable>
+              ) : (
+                renderStep()
+              )}
             </Animated.View>
           </ScrollView>
-          {!isPaywallStep ? (
+          {showFooter ? (
             <OnboardingFooter
               label={footerLabel(step)}
               disabled={!canContinue()}
-              celebrate={step === 21}
+              celebrate={step === STREAK_REVEAL_STEP_INDEX}
               onPress={() => void goNext()}
               bottomInset={insets.bottom}
             />
@@ -806,54 +910,54 @@ export function OnboardingFlow({ onDone }: Props) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: unrot.bg },
   scroll: { flexGrow: 1, paddingHorizontal: OB.padH, paddingBottom: spacing.xxl },
-  progressHeader: { marginBottom: spacing.lg },
+  progressHeader: { marginBottom: spacing.lg, paddingHorizontal: OB.padH },
   progressHeaderLog: { paddingHorizontal: OB.padH },
   logStepWrap: { flex: 1 },
   bodyWrap: { flex: 1, minHeight: 272, justifyContent: 'center', paddingTop: spacing.sm },
+  bodyWrapLogIntro: { justifyContent: 'flex-end', paddingTop: 0, minHeight: 360 },
+  coldOpenTap: {
+    flex: 1,
+    minHeight: 360,
+    justifyContent: 'center',
+  },
   welcomeCenter: { alignItems: 'center', justifyContent: 'center' },
-  heyHeadline: {
-    fontFamily: unrotFonts.heroSerif,
-    fontSize: 32,
+  coldOpenBold: {
+    fontFamily: OB_FONTS.black,
+    fontSize: 24,
+    lineHeight: 32,
     color: OB.ink,
-    letterSpacing: -0.3,
-    textAlign: 'center',
+    letterSpacing: -0.35,
+  },
+  coldOpenSimple: {
+    fontFamily: OB_FONTS.regular,
+    fontSize: 16,
+    lineHeight: 26,
+    color: OB.insight,
+    letterSpacing: -0.1,
   },
   bodyInkRegular: {
-    fontFamily: unrotFonts.interRegular,
+    fontFamily: OB_FONTS.regular,
     fontSize: 15,
     lineHeight: 24,
     color: OB.ink,
   },
   microHint: {
-    fontFamily: unrotFonts.monoBold,
+    fontFamily: OB_FONTS.bold,
     fontSize: 10,
     color: OB.label,
     letterSpacing: 1.5,
     marginTop: 8,
   },
   ageGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  ageBtn: {
-    flexGrow: 1,
-    minWidth: '46%',
-    paddingVertical: 16,
-    borderRadius: OB.radius,
-    borderWidth: 1,
-    borderColor: OB.hairline,
-    alignItems: 'center',
-    backgroundColor: OB.white,
-  },
-  ageBtnOn: { backgroundColor: OB.tile, borderWidth: 0 },
-  ageBtnText: { fontFamily: unrotFonts.heroSerif, fontSize: 15, color: OB.ink },
-  ageBtnTextOn: { color: OB.ink },
   hoursBlock: { alignItems: 'center' },
   hoursBig: {
-    fontFamily: unrotFonts.interLight,
+    fontFamily: OB_FONTS.regular,
     fontSize: 34,
     color: OB.ink,
     fontVariant: ['tabular-nums'],
   },
   hoursUnit: {
-    fontFamily: unrotFonts.monoBold,
+    fontFamily: OB_FONTS.bold,
     fontSize: 11,
     color: OB.label,
     letterSpacing: 2,
@@ -861,177 +965,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   slider: { width: '100%', height: 44 },
-  hoursCaption: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 13,
-    color: OB.secondary,
-  },
-  centerRow: { flexDirection: 'row', justifyContent: 'center' },
   discoverySubtitle: {
-    fontFamily: unrotFonts.interRegular,
+    fontFamily: OB_FONTS.regular,
     fontSize: 13,
     lineHeight: 20,
     color: OB.secondary,
   },
-  chipGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    justifyContent: 'center',
-  },
-  choiceStack: { gap: 10 },
-  choiceStackLoose: { gap: 12 },
-  chartBox: {
-    borderWidth: 1,
-    borderColor: OB.hairline,
-    borderRadius: OB.radius,
-    padding: 16,
-    width: '100%',
-  },
-  shieldStage: {
-    minHeight: 220,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  shieldWireframe: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: OB.tile,
-    borderRadius: OB.radius,
-    opacity: 0.6,
-  },
-  shieldCard: {
-    backgroundColor: OB.white,
-    borderRadius: OB.radius,
-    borderWidth: 1,
-    borderColor: OB.hairline,
-    paddingVertical: 28,
-    paddingHorizontal: 20,
-    zIndex: 1,
-  },
-  shieldLabel: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: 12,
-    color: OB.ink,
-    letterSpacing: 0.5,
-    textAlign: 'center',
-  },
-  loadingStep: { alignItems: 'center', paddingVertical: spacing.lg },
-  terminalLine: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: 11,
-    letterSpacing: 2,
-    color: OB.secondary,
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  summaryCard: {
-    borderWidth: 1,
-    borderColor: OB.hairline,
-    borderRadius: OB.radius,
-    padding: 24,
-  },
-  summaryMetric: {
-    fontFamily: unrotFonts.interLight,
-    fontSize: 34,
-    lineHeight: 42,
-    color: OB.ink,
-    letterSpacing: -0.5,
-  },
-  compareCard: {
-    borderWidth: 1,
-    borderColor: OB.hairline,
-    borderRadius: OB.radius,
-    padding: 20,
-  },
-  compareRow: { flexDirection: 'row', gap: 12 },
-  compareLeft: {
-    flex: 1,
-    flexShrink: 1,
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 13,
-    color: OB.label,
-  },
-  compareRight: {
-    flex: 1,
-    flexShrink: 1,
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 13,
-    color: OB.ink,
-  },
-  compareLeftSub: {
-    flex: 1,
-    flexShrink: 1,
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 12,
-    color: OB.label,
-  },
-  compareRightSub: {
-    flex: 1,
-    flexShrink: 1,
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 12,
-    color: OB.ink,
-  },
-  paywall: { paddingBottom: spacing.xxl },
-  payBanner: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: 11,
-    letterSpacing: 2,
-    color: OB.secondary,
-    textAlign: 'center',
-  },
-  reviewQuote: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 13,
-    lineHeight: 20,
-    color: OB.insight,
-  },
-  planCard: {
-    borderWidth: 1,
-    borderColor: OB.hairline,
-    borderRadius: OB.radius,
-    padding: 20,
-    marginBottom: 12,
-    backgroundColor: OB.white,
-  },
-  planCardEmphasis: { backgroundColor: OB.tile, borderColor: OB.tile },
-  planBadge: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: 8,
-    letterSpacing: 1.6,
-    color: OB.ink,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  planLabel: { fontFamily: unrotFonts.heroSerif, fontSize: 18, color: OB.ink },
-  planPrice: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: 14,
-    color: OB.ink,
-    marginTop: 8,
-  },
-  activateBtn: {
-    backgroundColor: OB.ink,
-    borderRadius: 14,
-    minHeight: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.lg,
-  },
-  activateBtnLabel: {
-    fontFamily: unrotFonts.monoBold,
-    fontSize: 14,
-    letterSpacing: 1.2,
-    color: OB.white,
-  },
-  legal: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 10,
-    lineHeight: 14,
-    color: OB.label,
-    marginTop: 12,
-    textAlign: 'center',
-  },
-  skipBtn: { alignSelf: 'center', paddingVertical: spacing.lg },
-  skipText: { fontFamily: unrotFonts.heroSerif, fontSize: 16, color: OB.secondary },
 });

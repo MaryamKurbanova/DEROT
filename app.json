@@ -15,7 +15,8 @@
         "com.apple.security.application-groups": ["group.io.derot.screentime"]
       },
       "infoPlist": {
-        "CFBundleDisplayName": "UNROT"
+        "CFBundleDisplayName": "UNROT",
+        "NSUserNotificationsUsageDescription": "UNROT sends trial reminders and nudges when temptation is highest."
       }
     },
     "android": {
@@ -43,7 +44,8 @@
           "appleTeamId": "VD7D5CUTRG",
           "appGroup": "group.io.derot.screentime"
         }
-      ]
+      ],
+      "expo-notifications"
     ]
   }
 }

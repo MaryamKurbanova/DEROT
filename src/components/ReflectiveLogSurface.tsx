@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -15,11 +15,13 @@ import {
 import { grantAccessPassForMonitoredApps } from '../lib/accessPass';
 import { getSocialLockEnabled } from '../lib/monitoredApps';
 import { logReflection } from '../lib/reflectiveLog';
+import { HoldToConfirmButton } from '../screens/onboarding/HoldToConfirmButton';
+import { OB_FONTS } from '../screens/onboarding/tokens';
 import { EDITORIAL_FADE_MS, unrot, unrotFonts } from '../theme';
 
 export type ReflectiveLogPurpose = 'intercept' | 'practice';
 
-const MOODS = ['Calm', 'Bored', 'Tired', 'Lost'] as const;
+const MOODS = ['Calm', 'Bored', 'Tired', 'Lost', 'Good'] as const;
 
 const INTENTS = ['Send message', 'Create content', 'Seek comfort', 'Doomscroll'] as const;
 
@@ -30,6 +32,219 @@ const CHIP_BORDER = 'rgba(26, 26, 26, 0.14)';
 const NOTE_SURFACE = 'rgba(26, 26, 26, 0.04)';
 const BAR_FILL_MS = 520;
 const INK_HEX = '#1A1A1A';
+
+function createLogStyles(onboarding: boolean) {
+  const regular = onboarding ? OB_FONTS.regular : unrotFonts.interRegular;
+  const bold = onboarding ? OB_FONTS.bold : unrotFonts.interBold;
+  const light = onboarding ? OB_FONTS.regular : unrotFonts.interLight;
+  const heading = onboarding ? OB_FONTS.regular : unrotFonts.heroSerifItalic;
+  const mono = onboarding ? OB_FONTS.bold : unrotFonts.monoBold;
+
+  return StyleSheet.create({
+    root: {
+      flex: 1,
+      backgroundColor: unrot.bg,
+    },
+    embeddedRoot: {
+      flex: 1,
+      minHeight: 480,
+      backgroundColor: unrot.bg,
+    },
+    fadeWrap: {
+      flex: 1,
+      backgroundColor: unrot.bg,
+    },
+    scroll: {
+      flex: 1,
+    },
+    scrollContent: {
+      flexGrow: 1,
+    },
+    exitHit: {
+      alignSelf: 'flex-start',
+      paddingVertical: 10,
+      marginBottom: 8,
+    },
+    exitText: {
+      fontFamily: regular,
+      fontSize: 13,
+      color: unrot.muted,
+    },
+    preamble: {
+      fontFamily: regular,
+      fontSize: 13,
+      lineHeight: 20,
+      color: unrot.muted,
+      marginBottom: 28,
+      maxWidth: 320,
+    },
+    section: {
+      paddingBottom: 28,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: HAIRLINE,
+    },
+    sectionSpaced: {
+      marginTop: 28,
+    },
+    question: {
+      fontFamily: heading,
+      fontSize: 24,
+      lineHeight: 32,
+      color: unrot.ink,
+      marginBottom: 16,
+      maxWidth: 340,
+    },
+    choiceList: {
+      alignSelf: 'stretch',
+    },
+    choiceBigBarWrap: {
+      alignSelf: 'stretch',
+    },
+    choiceBigBarWrapSpaced: {
+      marginBottom: 12,
+    },
+    choiceBigBarDimmed: {
+      opacity: 0.36,
+    },
+    choiceBigBarPressed: {
+      opacity: 0.94,
+      transform: [{ scale: 0.985 }],
+    },
+    choiceBigBarInner: {
+      minHeight: 58,
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: CHIP_BORDER,
+      overflow: 'hidden',
+      backgroundColor: NOTE_SURFACE,
+      justifyContent: 'center',
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      width: '100%',
+    },
+    choiceBigBarFill: {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      backgroundColor: unrot.ink,
+      borderTopLeftRadius: 16,
+      borderBottomLeftRadius: 16,
+    },
+    choiceBigBarFillFull: {
+      borderTopRightRadius: 16,
+      borderBottomRightRadius: 16,
+    },
+    choiceBigBarLabel: {
+      fontFamily: regular,
+      fontSize: 17,
+      lineHeight: 24,
+      textAlign: 'center',
+      zIndex: 1,
+      paddingVertical: 18,
+      paddingHorizontal: 20,
+    },
+    choiceBigBarLabelLocked: {
+      fontFamily: bold,
+    },
+    noteBlock: {
+      marginTop: 32,
+    },
+    noteLabel: {
+      fontFamily: heading,
+      fontSize: 20,
+      lineHeight: 28,
+      color: unrot.ink,
+      marginBottom: 6,
+    },
+    noteHint: {
+      fontFamily: regular,
+      fontSize: 13,
+      lineHeight: 19,
+      color: unrot.muted,
+      marginBottom: 12,
+    },
+    noteInput: {
+      fontFamily: regular,
+      fontSize: 15,
+      lineHeight: 23,
+      color: unrot.ink,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      minHeight: 96,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: CHIP_BORDER,
+      backgroundColor: NOTE_SURFACE,
+    },
+    successText: {
+      marginTop: 36,
+      fontFamily: regular,
+      fontSize: 14,
+      color: unrot.muted,
+    },
+    reframeText: {
+      marginTop: 36,
+      fontFamily: light,
+      fontSize: 19,
+      lineHeight: 30,
+      color: unrot.ink,
+      letterSpacing: -0.2,
+    },
+    footer: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: unrot.bg,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: HAIRLINE,
+    },
+    continueBtn: {
+      alignSelf: 'stretch',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 16,
+      borderRadius: 14,
+      minHeight: 52,
+    },
+    continueBtnStretch: {
+      alignSelf: 'stretch',
+    },
+    holdHint: {
+      fontFamily: mono,
+      fontSize: 10,
+      letterSpacing: 1.5,
+      color: unrot.muted,
+      textAlign: 'center',
+      marginBottom: 10,
+      textTransform: 'uppercase',
+    },
+    continueBtnOn: {
+      backgroundColor: unrot.ink,
+    },
+    continueBtnOff: {
+      backgroundColor: NOTE_SURFACE,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: CHIP_BORDER,
+    },
+    continueBtnPressed: {
+      opacity: 0.82,
+    },
+    continueLabel: {
+      fontFamily: bold,
+      fontSize: 16,
+      letterSpacing: 0.15,
+      color: '#FFFFFF',
+    },
+    continueLabelMuted: {
+      fontFamily: regular,
+      color: unrot.muted,
+    },
+  });
+}
+
+type LogStyles = ReturnType<typeof createLogStyles>;
 
 export type ReflectiveLogSurfaceProps = {
   purpose: ReflectiveLogPurpose;
@@ -44,6 +259,13 @@ export type ReflectiveLogSurfaceProps = {
   horizontalBleed?: number;
   topInset?: number;
   bottomInset?: number;
+  /** When set, shows a tailored line after submit instead of "Recorded." */
+  getReframeLine?: (mood: string, intent: string) => string;
+  reframeDelayMs?: number;
+  /** Onboarding screen 31 — press-and-hold to submit. */
+  holdToConfirm?: boolean;
+  /** Suppress haptics on mood/intent bar selection (onboarding trial). */
+  quietInteraction?: boolean;
 };
 
 function BarChoiceRow<T extends string>({
@@ -52,12 +274,16 @@ function BarChoiceRow<T extends string>({
   locked,
   siblingLocked,
   onCommit,
+  quietInteraction = false,
+  styles,
 }: {
   label: T;
   isLast: boolean;
   locked: boolean;
   siblingLocked: boolean;
   onCommit: () => void;
+  quietInteraction?: boolean;
+  styles: LogStyles;
 }) {
   const progress = useRef(new Animated.Value(locked ? 1 : 0)).current;
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -91,7 +317,9 @@ function BarChoiceRow<T extends string>({
     run.start(({ finished }) => {
       if (finished && !fillCompletedRef.current) {
         fillCompletedRef.current = true;
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (!quietInteraction) {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
         onCommit();
       }
     });
@@ -156,10 +384,14 @@ function ReflectiveChoices<T extends string>({
   options,
   selected,
   onPick,
+  quietInteraction = false,
+  styles,
 }: {
   options: readonly T[];
   selected: T | null;
   onPick: (t: T) => void;
+  quietInteraction?: boolean;
+  styles: LogStyles;
 }) {
   const siblingLocked = selected !== null;
   return (
@@ -174,6 +406,8 @@ function ReflectiveChoices<T extends string>({
             locked={selected === opt}
             siblingLocked={siblingLocked}
             onCommit={() => onPick(opt)}
+            quietInteraction={quietInteraction}
+            styles={styles}
           />
         );
       })}
@@ -194,13 +428,19 @@ export function ReflectiveLogSurface({
   horizontalBleed = 0,
   topInset = 0,
   bottomInset = 0,
+  getReframeLine,
+  reframeDelayMs = 2200,
+  holdToConfirm = false,
+  quietInteraction = false,
 }: ReflectiveLogSurfaceProps) {
   const [mood, setMood] = useState<(typeof MOODS)[number] | null>(null);
   const [intent, setIntent] = useState<(typeof INTENTS)[number] | null>(null);
   const [note, setNote] = useState('');
   const [success, setSuccess] = useState(false);
+  const [reframeLine, setReframeLine] = useState<string | null>(null);
   const savedRef = useRef(false);
   const fadeOpacity = useRef(new Animated.Value(embedded ? 1 : 0)).current;
+  const styles = useMemo(() => createLogStyles(embedded), [embedded]);
 
   useEffect(() => {
     if (embedded) {
@@ -228,17 +468,21 @@ export function ReflectiveLogSurface({
       }
       savedRef.current = true;
       onLogSaved?.();
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      if (!holdToConfirm) {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      }
+      const line = getReframeLine?.(mood, intent) ?? null;
+      setReframeLine(line);
       setSuccess(true);
       setTimeout(() => {
         onComplete();
-      }, 1000);
+      }, line ? reframeDelayMs : 1000);
     } catch (e) {
       if (__DEV__) {
         console.warn('ReflectiveLogSurface persist', e);
       }
     }
-  }, [mood, intent, note, purpose, targetAppId, onComplete, onInterceptPassGranted, onLogSaved]);
+  }, [mood, intent, note, purpose, targetAppId, onComplete, onInterceptPassGranted, onLogSaved, getReframeLine, reframeDelayMs, holdToConfirm]);
 
   const canSubmit = mood != null && intent != null;
 
@@ -275,12 +519,12 @@ export function ReflectiveLogSurface({
 
         <View style={styles.section}>
           <Text style={styles.question}>How are you feeling?</Text>
-          <ReflectiveChoices options={MOODS} selected={mood} onPick={setMood} />
+          <ReflectiveChoices options={MOODS} selected={mood} onPick={setMood} quietInteraction={quietInteraction} styles={styles} />
         </View>
 
         <View style={[styles.section, styles.sectionSpaced]}>
           <Text style={styles.question}>What is your intent?</Text>
-          <ReflectiveChoices options={INTENTS} selected={intent} onPick={setIntent} />
+          <ReflectiveChoices options={INTENTS} selected={intent} onPick={setIntent} quietInteraction={quietInteraction} styles={styles} />
         </View>
 
         <View style={styles.noteBlock}>
@@ -300,7 +544,11 @@ export function ReflectiveLogSurface({
           />
         </View>
 
-        {success ? <Text style={styles.successText}>Recorded.</Text> : null}
+        {success ? (
+          <Text style={reframeLine ? styles.reframeText : styles.successText}>
+            {reframeLine ?? 'Recorded.'}
+          </Text>
+        ) : null}
       </ScrollView>
 
       {!success ? (
@@ -314,19 +562,31 @@ export function ReflectiveLogSurface({
             },
           ]}
         >
-          <Pressable
-            onPress={() => void persistAndClose()}
-            disabled={!canSubmit}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: !canSubmit }}
-            style={({ pressed }) => [
-              styles.continueBtn,
-              canSubmit ? styles.continueBtnOn : styles.continueBtnOff,
-              pressed && canSubmit && styles.continueBtnPressed,
-            ]}
-          >
-            <Text style={[styles.continueLabel, !canSubmit && styles.continueLabelMuted]}>Continue</Text>
-          </Pressable>
+          {holdToConfirm ? (
+            <>
+              <Text style={styles.holdHint}>Press and hold to confirm</Text>
+              <HoldToConfirmButton
+                label="Continue"
+                disabled={!canSubmit}
+                onComplete={() => void persistAndClose()}
+                style={styles.continueBtnStretch}
+              />
+            </>
+          ) : (
+            <Pressable
+              onPress={() => void persistAndClose()}
+              disabled={!canSubmit}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canSubmit }}
+              style={({ pressed }) => [
+                styles.continueBtn,
+                canSubmit ? styles.continueBtnOn : styles.continueBtnOff,
+                pressed && canSubmit && styles.continueBtnPressed,
+              ]}
+            >
+              <Text style={[styles.continueLabel, !canSubmit && styles.continueLabelMuted]}>Continue</Text>
+            </Pressable>
+          )}
         </View>
       ) : null}
     </Animated.View>
@@ -350,186 +610,3 @@ export function ReflectiveLogSurface({
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: unrot.bg,
-  },
-  embeddedRoot: {
-    flex: 1,
-    minHeight: 480,
-    backgroundColor: unrot.bg,
-  },
-  fadeWrap: {
-    flex: 1,
-    backgroundColor: unrot.bg,
-  },
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  exitHit: {
-    alignSelf: 'flex-start',
-    paddingVertical: 10,
-    marginBottom: 8,
-  },
-  exitText: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 13,
-    color: unrot.muted,
-  },
-  preamble: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 13,
-    lineHeight: 20,
-    color: unrot.muted,
-    marginBottom: 28,
-    maxWidth: 320,
-  },
-  section: {
-    paddingBottom: 28,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: HAIRLINE,
-  },
-  sectionSpaced: {
-    marginTop: 28,
-  },
-  question: {
-    fontFamily: unrotFonts.heroSerifItalic,
-    fontSize: 24,
-    lineHeight: 32,
-    color: unrot.ink,
-    marginBottom: 16,
-    maxWidth: 340,
-  },
-  choiceList: {
-    alignSelf: 'stretch',
-  },
-  choiceBigBarWrap: {
-    alignSelf: 'stretch',
-  },
-  choiceBigBarWrapSpaced: {
-    marginBottom: 12,
-  },
-  choiceBigBarDimmed: {
-    opacity: 0.36,
-  },
-  choiceBigBarPressed: {
-    opacity: 0.94,
-    transform: [{ scale: 0.985 }],
-  },
-  choiceBigBarInner: {
-    minHeight: 58,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: CHIP_BORDER,
-    overflow: 'hidden',
-    backgroundColor: NOTE_SURFACE,
-    justifyContent: 'center',
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    width: '100%',
-  },
-  choiceBigBarFill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: unrot.ink,
-    borderTopLeftRadius: 16,
-    borderBottomLeftRadius: 16,
-  },
-  choiceBigBarFillFull: {
-    borderTopRightRadius: 16,
-    borderBottomRightRadius: 16,
-  },
-  choiceBigBarLabel: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 17,
-    lineHeight: 24,
-    textAlign: 'center',
-    zIndex: 1,
-    paddingVertical: 18,
-    paddingHorizontal: 20,
-  },
-  choiceBigBarLabelLocked: {
-    fontFamily: unrotFonts.interBold,
-  },
-  noteBlock: {
-    marginTop: 32,
-  },
-  noteLabel: {
-    fontFamily: unrotFonts.heroSerifItalic,
-    fontSize: 20,
-    lineHeight: 28,
-    color: unrot.ink,
-    marginBottom: 6,
-  },
-  noteHint: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 13,
-    lineHeight: 19,
-    color: unrot.muted,
-    marginBottom: 12,
-  },
-  noteInput: {
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 15,
-    lineHeight: 23,
-    color: unrot.ink,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    minHeight: 96,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: CHIP_BORDER,
-    backgroundColor: NOTE_SURFACE,
-  },
-  successText: {
-    marginTop: 36,
-    fontFamily: unrotFonts.interRegular,
-    fontSize: 14,
-    color: unrot.muted,
-  },
-  footer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: unrot.bg,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: HAIRLINE,
-  },
-  continueBtn: {
-    alignSelf: 'stretch',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 14,
-    minHeight: 52,
-  },
-  continueBtnOn: {
-    backgroundColor: unrot.ink,
-  },
-  continueBtnOff: {
-    backgroundColor: NOTE_SURFACE,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: CHIP_BORDER,
-  },
-  continueBtnPressed: {
-    opacity: 0.82,
-  },
-  continueLabel: {
-    fontFamily: unrotFonts.interBold,
-    fontSize: 16,
-    letterSpacing: 0.15,
-    color: '#FFFFFF',
-  },
-  continueLabelMuted: {
-    fontFamily: unrotFonts.interRegular,
-    color: unrot.muted,
-  },
-});
