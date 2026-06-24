@@ -16,26 +16,20 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   computeDangerZoneInsight,
+  computeConsecutiveLogStreak,
   formatEditorialLuxuryDangerLine,
   formatHourRangeAmPm,
   getAllLogsForAnalytics,
   type DangerZoneInsight,
   type LogEntry,
 } from '../lib/reflectiveLog';
-import { ScreenTimeMetricTile } from '../components/ScreenTimeMetricTile';
 import {
   fetchTodayScreenTimeWithRetry,
-  hasDerotActivitySelection,
-  isIosScreenTimeApproved,
-  readIosScreenTimeUiSnapshot,
-  readIosTrackingFlags,
   setScreenTimeRuntimeReady,
   syncDerotUsageFromPhone,
   tryEnsureDerotScreenTimeTracking,
   type ScreenTimeFetchMode,
 } from '../lib/derotIosScreenTime';
-import { formatScreenTimeScopeLabel, readDerotSelectionMeta } from '../lib/derotSelectionMeta';
-import { formatScreenTimeDisplay } from '../lib/screenTimeDisplay';
 import { getHomeSyncedTodayMinutes } from '../lib/screenTimeHomeSync';
 import { getReclaimedFocusSnapshot, type ReclaimedFocusSnapshot } from '../lib/reclaimedFocus';
 import { getReclaimedMomentsToday } from '../lib/reclaimedMoments';
@@ -328,6 +322,15 @@ const homeStyles = StyleSheet.create({
     marginBottom: 8,
     opacity: 1,
   },
+  metricStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  metricStatFire: {
+    fontSize: 26,
+    lineHeight: 32,
+  },
   metricStat: {
     fontFamily: unrotFonts.interLight,
     fontSize: 32,
@@ -522,12 +525,14 @@ function HomeTopNav({
 
 function HomeRankStrip({
   rankUi,
+  currentStreak,
   onOpenRank,
 }: {
   rankUi: RankUiSnapshot;
+  currentStreak: number;
   onOpenRank: () => void;
 }) {
-  const streakLabel = rankUi.streak === 1 ? 'day' : 'days';
+  const streakLabel = currentStreak === 1 ? 'day' : 'days';
   const pct = Math.round(rankUi.progress01 * 100);
   const tierSpan = rankUi.nextRank ? rankUi.nextRank.minXp - rankUi.rank.minXp : 1;
   const xpIntoTier = Math.max(0, rankUi.xp - rankUi.rank.minXp);
@@ -550,7 +555,7 @@ function HomeRankStrip({
         pressed && homeStyles.homeRankStripPressed,
       ]}
       accessibilityRole="button"
-      accessibilityLabel={`Rank ${rankUi.rank.title}. Streak ${rankUi.streak} ${streakLabel}. ${pct} percent toward next rank. ${metaLeft}. Open details.`}
+      accessibilityLabel={`Rank ${rankUi.rank.title}. Streak ${currentStreak} ${streakLabel}. ${pct} percent toward next rank. ${metaLeft}. Open details.`}
       android_ripple={{ color: 'rgba(42, 37, 32, 0.08)' }}
     >
       <LinearGradient
@@ -567,7 +572,7 @@ function HomeRankStrip({
           </Text>
           <View style={homeStyles.homeRankStreakChip} importantForAccessibility="no">
             <Text style={homeStyles.homeRankStreakChipText}>
-              🔥 {rankUi.streak} {streakLabel}
+              🔥 {currentStreak} {streakLabel}
             </Text>
           </View>
         </View>
@@ -598,116 +603,150 @@ function HomeTopSection({
   onOpenJournal,
   onOpenSettings,
   rankUi,
+  currentStreak,
   onOpenRank,
 }: {
   homeDateLine: string;
   onOpenJournal: () => void;
   onOpenSettings: () => void;
   rankUi: RankUiSnapshot;
+  currentStreak: number;
   onOpenRank: () => void;
 }) {
   return (
     <View style={homeStyles.topSectionOpen}>
       <HomeTopNav onOpenJournal={onOpenJournal} onOpenSettings={onOpenSettings} />
       <Text style={homeStyles.homeDate}>{homeDateLine}</Text>
-      <HomeRankStrip rankUi={rankUi} onOpenRank={onOpenRank} />
+      <HomeRankStrip rankUi={rankUi} currentStreak={currentStreak} onOpenRank={onOpenRank} />
     </View>
   );
 }
 
 function HomeMetricsBand({
-  screenHrsDisplay,
-  screenTimeCaption,
+  currentStreak,
   momentsCount,
   animationNonce,
 }: {
-  screenHrsDisplay: string;
-  screenTimeCaption: string;
+  currentStreak: number;
   momentsCount: number;
   animationNonce: number;
 }) {
+  const [shownStreak, setShownStreak] = useState(0);
   const [shownMoments, setShownMoments] = useState(0);
+  const animStreak = useRef(new Animated.Value(0)).current;
   const animMoments = useRef(new Animated.Value(0)).current;
+  const streakScale = useRef(new Animated.Value(1)).current;
   const momentsScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     let cancelled = false;
-    let listenerId: string | undefined;
+    let streakListenerId: string | undefined;
+    let momentsListenerId: string | undefined;
 
+    animStreak.setValue(0);
     animMoments.setValue(0);
+    streakScale.setValue(1);
     momentsScale.setValue(1);
+    setShownStreak(0);
     setShownMoments(0);
 
-    if (momentsCount <= 0) {
-      return () => {
-        cancelled = true;
-      };
-    }
+    const runCountUp = (
+      anim: Animated.Value,
+      target: number,
+      setShown: (n: number) => void,
+      scale: Animated.Value,
+      delayMs: number,
+    ) => {
+      if (target <= 0) return;
 
-    const startTimer = setTimeout(() => {
-      if (cancelled) return;
-      listenerId = animMoments.addListener(({ value }) => {
-        if (!cancelled) {
-          setShownMoments(Math.min(momentsCount, Math.max(0, Math.round(value))));
-        }
-      });
+      const startTimer = setTimeout(() => {
+        if (cancelled) return;
+        const listenerId = anim.addListener(({ value }) => {
+          if (!cancelled) {
+            setShown(Math.min(target, Math.max(0, Math.round(value))));
+          }
+        });
 
-      Animated.timing(animMoments, {
-        toValue: momentsCount,
-        duration: RECLAIMED_COUNT_MS,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }).start(({ finished }) => {
-        if (listenerId != null) {
-          animMoments.removeListener(listenerId);
-          listenerId = undefined;
-        }
-        if (cancelled || !finished) return;
-        setShownMoments(momentsCount);
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        momentsScale.setValue(1.042);
-        Animated.spring(momentsScale, {
-          toValue: 1,
-          friction: 7,
-          tension: 220,
-          useNativeDriver: true,
-        }).start();
-      });
-    }, METRICS_MOMENTS_COUNT_START_DELAY_MS);
+        if (anim === animStreak) streakListenerId = listenerId;
+        else momentsListenerId = listenerId;
+
+        Animated.timing(anim, {
+          toValue: target,
+          duration: RECLAIMED_COUNT_MS,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }).start(({ finished }) => {
+          anim.removeListener(listenerId);
+          if (anim === animStreak) streakListenerId = undefined;
+          else momentsListenerId = undefined;
+          if (cancelled || !finished) return;
+          setShown(target);
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          scale.setValue(1.042);
+          Animated.spring(scale, {
+            toValue: 1,
+            friction: 7,
+            tension: 220,
+            useNativeDriver: true,
+          }).start();
+        });
+      }, delayMs);
+
+      return startTimer;
+    };
+
+    const streakTimer = runCountUp(animStreak, currentStreak, setShownStreak, streakScale, 0);
+    const momentsTimer = runCountUp(
+      animMoments,
+      momentsCount,
+      setShownMoments,
+      momentsScale,
+      METRICS_MOMENTS_COUNT_START_DELAY_MS,
+    );
 
     return () => {
       cancelled = true;
-      clearTimeout(startTimer);
-      if (listenerId != null) animMoments.removeListener(listenerId);
+      if (streakTimer != null) clearTimeout(streakTimer);
+      if (momentsTimer != null) clearTimeout(momentsTimer);
+      if (streakListenerId != null) animStreak.removeListener(streakListenerId);
+      if (momentsListenerId != null) animMoments.removeListener(momentsListenerId);
+      animStreak.stopAnimation();
       animMoments.stopAnimation();
     };
-  }, [animationNonce, momentsCount, animMoments, momentsScale]);
+  }, [animationNonce, currentStreak, momentsCount, animStreak, animMoments, streakScale, momentsScale]);
 
-  const screenTimeNeedsUnitSuffix =
-    screenHrsDisplay !== '…' &&
-    screenHrsDisplay !== '—' &&
-    screenHrsDisplay !== '0m' &&
-    !/\d+min|\d+h\b/.test(screenHrsDisplay);
-  const screenA11y = `Screen time today, ${screenHrsDisplay}`;
+  const streakA11y = `Current streak, ${currentStreak} ${currentStreak === 1 ? 'day' : 'days'}`;
   const momentsA11y = `Reclaimed moments today, ${momentsCount}`;
   return (
     <View style={homeStyles.metricsSplitRow}>
-      <View style={homeStyles.metricTileShellScreen}>
-        <ScreenTimeMetricTile
-          screenHrsDisplay={screenHrsDisplay}
-          screenTimeCaption={screenTimeCaption}
-          screenTimeNeedsUnitSuffix={screenTimeNeedsUnitSuffix}
-          screenA11y={screenA11y}
-          gradientColors={HOME_METRIC_SCREEN_GRADIENT}
-          gradientLocations={HOME_METRIC_SCREEN_GRADIENT_LOCATIONS}
-          styles={{
-            metricBoxBase: homeStyles.metricBoxBase,
-            monoLabelScreenTime: homeStyles.monoLabelScreenTime,
-            metricStat: homeStyles.metricStat,
-            metricStatUnit: homeStyles.metricStatUnit,
-            metricCaption: homeStyles.metricCaption,
-          }}
-        />
+      <View
+        style={homeStyles.metricTileShellScreen}
+        accessible
+        accessibilityRole="text"
+        accessibilityLabel={streakA11y}
+      >
+        <LinearGradient
+          colors={[...HOME_METRIC_SCREEN_GRADIENT]}
+          locations={[...HOME_METRIC_SCREEN_GRADIENT_LOCATIONS]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={homeStyles.metricBoxBase}
+        >
+          <Text style={homeStyles.monoLabelMuted} importantForAccessibility="no">
+            CURRENT STREAK
+          </Text>
+          <Animated.View style={[homeStyles.metricStatRow, { transform: [{ scale: streakScale }] }]}>
+            <Text style={homeStyles.metricStat} importantForAccessibility="no">
+              {String(shownStreak)}
+            </Text>
+            <Text style={homeStyles.metricStatFire} importantForAccessibility="no">
+              🔥
+            </Text>
+          </Animated.View>
+          <Text style={homeStyles.metricCaption} importantForAccessibility="no">
+            Days
+          </Text>
+        </LinearGradient>
       </View>
       <View style={homeStyles.metricTileShellMoments} accessible accessibilityRole="text" accessibilityLabel={momentsA11y}>
         <LinearGradient
@@ -913,18 +952,6 @@ export function DashboardScreen({
   const [refreshDelightNonce, setRefreshDelightNonce] = useState(0);
   const loadRunningRef = useRef(false);
   const loadQueueRef = useRef(Promise.resolve());
-  const [iosScreenUi, setIosScreenUi] = useState(() => {
-    const snap = readIosScreenTimeUiSnapshot();
-    return {
-      trackingStarted: snap.trackingStarted,
-      hasSelection: snap.hasSelection,
-      scopeLabel:
-        Platform.OS === 'ios'
-          ? formatScreenTimeScopeLabel(readDerotSelectionMeta())
-          : 'Today',
-    };
-  });
-
   const modeHomeOpacity = useRef(new Animated.Value(1)).current;
   const modeJournalOpacity = useRef(new Animated.Value(0)).current;
 
@@ -1100,49 +1127,6 @@ export function DashboardScreen({
     await loadDashboardData(false);
   }, [loadDashboardData]);
 
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-    const refreshUi = () => {
-      try {
-        setScreenTimeRuntimeReady(true);
-        const flags = readIosTrackingFlags();
-        setIosScreenUi({
-          trackingStarted: flags.trackingStarted,
-          hasSelection: hasDerotActivitySelection(),
-          scopeLabel: formatScreenTimeScopeLabel(readDerotSelectionMeta()),
-        });
-      } catch {
-        /* Screen Time bridge may not be ready on first paint */
-      }
-    };
-    refreshUi();
-    const timer = setTimeout(refreshUi, 400);
-    const timer2 = setTimeout(refreshUi, 2500);
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(timer2);
-    };
-  }, [reclaimedSnapshot, statsTick]);
-
-  const todayScreenMinutes = useMemo(() => {
-    if (Platform.OS !== 'ios') {
-      return reclaimedSnapshot?.currentDailyUsageMinutes ?? 0;
-    }
-    return Math.max(homeSyncedMinutes, getHomeSyncedTodayMinutes());
-  }, [reclaimedSnapshot, homeSyncedMinutes, statsTick]);
-
-  const screenTimeCaption = useMemo(() => {
-    if (Platform.OS === 'ios' && todayScreenMinutes < 1) return 'Sync in Settings';
-    if (todayScreenMinutes >= 1) return iosScreenUi.scopeLabel;
-    return 'Sync in Settings';
-  }, [iosScreenUi.scopeLabel, todayScreenMinutes]);
-
-  const screenHrsDisplay = useMemo(() => {
-    if (Platform.OS === 'ios' && todayScreenMinutes < 1) return '—';
-    if (todayScreenMinutes >= 1) return formatScreenTimeDisplay(todayScreenMinutes);
-    return '—';
-  }, [todayScreenMinutes]);
-
   const onHomeRefresh = useCallback(async () => {
     setHomeRefreshing(true);
     try {
@@ -1169,6 +1153,8 @@ export function DashboardScreen({
   );
 
   const dangerInsight = useMemo(() => computeDangerZoneInsight(analytics), [analytics]);
+
+  const currentStreak = useMemo(() => computeConsecutiveLogStreak(analytics), [analytics]);
 
   useEffect(() => {
     if (view !== 'home') return;
@@ -1305,14 +1291,14 @@ export function DashboardScreen({
                     onOpenJournal={openJournal}
                     onOpenSettings={onOpenSettings}
                     rankUi={rankUi}
+                    currentStreak={currentStreak}
                     onOpenRank={onOpenRank}
                   />
                 </Animated.View>
 
                 <Animated.View style={{ opacity: homeSegMetrics }}>
                   <HomeMetricsBand
-                    screenHrsDisplay={screenHrsDisplay}
-                    screenTimeCaption={screenTimeCaption}
+                    currentStreak={currentStreak}
                     momentsCount={momentsCount}
                     animationNonce={homeCountAnimNonce}
                   />

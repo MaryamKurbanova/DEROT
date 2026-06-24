@@ -56,6 +56,17 @@ function yesterdayKey(from: Date): string {
   return dayKeyLocal(d);
 }
 
+/** Consecutive-day streak for display — 0 if the chain is broken (missed a day). */
+export function getActiveStreak(state: Pick<RankPersisted, 'streak' | 'lastLogStreakDayKey'>): number {
+  const streak = Math.max(0, state.streak);
+  if (streak <= 0) return 0;
+  const last = state.lastLogStreakDayKey;
+  if (!last) return 0;
+  const today = dayKeyLocal();
+  if (last === today || last === yesterdayKey(new Date())) return streak;
+  return 0;
+}
+
 export function getRankForXp(xp: number): RankDef {
   let current: RankDef = RANKS[0];
   for (const r of RANKS) {

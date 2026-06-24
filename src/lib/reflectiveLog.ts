@@ -101,6 +101,54 @@ export async function getAllLogsForAnalytics(): Promise<LogEntry[]> {
   return loadAll();
 }
 
+function logDayKey(ts: number): string {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function shiftLogDayKey(key: string, deltaDays: number): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + deltaDays);
+  return logDayKey(date.getTime());
+}
+
+/**
+ * Consecutive local days with at least one log, counting backward from today when
+ * logged today, or from yesterday when today is still open but not logged yet.
+ */
+export function computeConsecutiveLogStreak(entries: LogEntry[], now: Date = new Date()): number {
+  if (entries.length === 0) return 0;
+
+  const loggedDays = new Set<string>();
+  for (const e of entries) {
+    loggedDays.add(logDayKey(e.timestamp));
+  }
+
+  const todayKey = logDayKey(now.getTime());
+  const yesterdayKey = shiftLogDayKey(todayKey, -1);
+
+  let anchor: string | null = null;
+  if (loggedDays.has(todayKey)) {
+    anchor = todayKey;
+  } else if (loggedDays.has(yesterdayKey)) {
+    anchor = yesterdayKey;
+  } else {
+    return 0;
+  }
+
+  let count = 0;
+  let cursor = anchor;
+  while (loggedDays.has(cursor)) {
+    count += 1;
+    cursor = shiftLogDayKey(cursor, -1);
+  }
+  return count;
+}
+
 /** Most frequent state (Section 01). */
 export function computePrimaryTrigger(entries: LogEntry[]): string | null {
   if (entries.length === 0) return null;
